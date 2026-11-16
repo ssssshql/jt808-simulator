@@ -87,6 +87,20 @@ $('#themeBtn').onclick = () => {
   if (S) renderRing(S);
 };
 
+// ---------------- 侧栏收起 / 展开（记在本机） ----------------
+function syncSideTg() {
+  const mini = document.documentElement.classList.contains('side-mini');
+  $('#sideTg .nt').textContent = mini ? '展开侧栏' : '收起侧栏';
+  $('#sideTg').title = mini ? '展开侧栏' : '收起侧栏';
+}
+$('#sideTg').onclick = () => {
+  const mini = document.documentElement.classList.toggle('side-mini');
+  localStorage.setItem('jt808.sideMini', mini ? '1' : '0');
+  syncSideTg();
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+};
+syncSideTg();
+
 // ---------------- 导航：左侧栏切换「总览」与各功能页 ----------------
 let page = 'overview';        // 'overview' = 只看主屏；其它 = 弹出面板当前标签
 function go(p) {

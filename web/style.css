@@ -649,17 +649,36 @@ input:focus, select:focus, textarea:focus { box-shadow: none; border-color: var(
 .struct { border-radius: 6px; } .struct .item, .bit { border-radius: 4px; }
 .mapt .map-note { border-radius: 4px; }
 
-/* 窗口较窄时侧栏收起为图标栏（悬停看名称） */
-@media (max-width: 1359px) {
-  :root { --side: 60px; }
-  .snav a { justify-content: center; padding: 0; }
-  .snav .nt, .sterm-h > span, .side .tc .mono, .side .tc em { display: none !important; }
-  .snav .badge { position: absolute; top: 2px; right: 3px; margin: 0; height: 15px; min-width: 15px; font-size: 10px; padding: 0 4px; }
-  .sterm-h { flex-direction: column; padding: 0 0 6px; gap: 2px; }
-  .side .tc { grid-template-columns: auto auto; min-height: 30px; padding: 4px 6px; justify-content: center; }
-  .side .tc .badge { grid-row: 1; grid-column: auto; }
-  .snav a.on::before { top: 9px; bottom: 9px; }
-}
+/* 侧栏收起为图标栏（底部按钮切换，悬停看名称） */
+.side-mini { --side: 60px; }
+.side-mini .snav a { justify-content: center; padding: 0; }
+.side-mini .snav .nt, .side-mini .sterm-h > span, .side-mini .side .tc .mono, .side-mini .side .tc em { display: none !important; }
+.side-mini .snav .badge { position: absolute; top: 2px; right: 3px; margin: 0; height: 15px; min-width: 15px; font-size: 10px; padding: 0 4px; }
+.side-mini .sterm-h { flex-direction: column; padding: 0 0 6px; gap: 2px; }
+.side-mini .side .tc { grid-template-columns: auto auto; min-height: 30px; padding: 4px 6px; justify-content: center; }
+.side-mini .side .tc .badge { grid-row: 1; grid-column: auto; }
+.side-mini .snav a.on::before { top: 9px; bottom: 9px; }
+
 .btn.primary, [data-theme=dark] .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 [data-theme=dark] .btn.primary { color: #000; }
 .btn.primary:hover, [data-theme=dark] .btn.primary:hover { background: var(--primary-2); border-color: var(--primary-2); }
+
+.side-tg { flex: none; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border: 0; border-radius: var(--radius-md); background: none; color: var(--muted); cursor: default; font-size: 12.5px; white-space: nowrap; }
+.side-tg:hover { background: var(--surface-3); color: var(--text); }
+.side-tg svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.side-mini .side-tg { justify-content: center; padding: 0; }
+.side-mini .side-tg .nt { display: none; }
+
+/* 地图底图切换（标准 / 卫星） */
+.map-base { display: flex; background: var(--surface); border-radius: 6px; box-shadow: 0 1px 4px rgba(0, 0, 0, .15); overflow: hidden; }
+.map-base button { border: 0; background: none; padding: 4px 10px; font-size: 12px; color: var(--text-2); cursor: default; }
+.map-base button.on { background: var(--primary); color: #fff; }
+[data-theme=dark] .map-base button.on { color: #000; }
+.leaflet-container.sat .leaflet-tile-pane, [data-theme=dark] .leaflet-container.sat .leaflet-tile-pane { filter: none; }
+
+/* 工作区较窄（高缩放比例的屏幕或小窗口）：总览改为 4 列，可上下滚动 */
+.work { container-type: inline-size; overflow-y: auto; scrollbar-width: thin; }
+@container (max-width: 1120px) {
+  .bento { flex: none; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: 124px 124px 150px 170px 380px;
+    grid-template-areas: "spd mil map map" "spd fuel map map" "st st al al" "up up inbox inbox" "log log log reply"; }
+}
