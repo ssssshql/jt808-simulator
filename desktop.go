@@ -4,6 +4,7 @@ package main
 
 // 桌面版（Wails）：不带参数启动时，在 127.0.0.1 随机端口起内置 Web 服务，用 WebView2 窗口打开。
 // 后端与 -web 模式完全相同（含 SSE 日志），只是不再需要浏览器和服务器。
+// 窗口无边框，标题栏与窗口按钮在页面里（web/desktop.js）。
 // 状态保存在 %APPDATA%\jt808sim\state；带任意参数启动仍是原来的命令行 / -web 模式。
 // 构建：go build -tags desktop,production -ldflags "-H windowsgui" -o jt808sim.exe .
 
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -64,8 +66,13 @@ func runDesktop() {
 		Title:     "JT808 模拟器 " + buildInfo().Version,
 		Width:     1440,
 		Height:    900,
-		MinWidth:  960,
-		MinHeight: 600,
+		MinWidth:  1200,
+		MinHeight: 720,
+		// 无边框：标题栏、窗口按钮、拖动与缩放由页面自绘（web/desktop.js 通过 WebView2 postMessage 交给 Wails）
+		Frameless:        true,
+		BackgroundColour: &options.RGBA{R: 241, G: 240, B: 236, A: 255},
+		// 页面来自本地服务 http://127.0.0.1:<端口>，需允许它向 Wails 发送窗口消息（只放行这一个精确来源）
+		BindingsAllowedOrigins: strings.TrimSuffix(url, "/"),
 		AssetServer: &assetserver.Options{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")

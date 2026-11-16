@@ -10,33 +10,37 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="hd">
-  <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M7 21l5-10 4 7 3-4 5 8" /></svg></span><span class="ttl">JT808 终端模拟器</span><span class="ver mono" id="verTag" hidden></span></div>
-  <div class="hp"><div class="meta" id="meta"></div><div id="connPill" class="status st-offline"><span class="dot"></span><span id="connText">离线</span></div></div>
-  <div class="grow"></div>
-  <nav class="hnav">
-    <button class="pb" data-goto="motion">运动</button><button class="pb" data-goto="params">参数</button><button class="pb" data-goto="areas">区域</button>
-    <button class="pb" data-goto="media">多媒体<span class="badge info" id="navStream" hidden></span></button><button class="pb" data-goto="config">配置</button>
-  </nav>
+<header class="tb" id="titlebar">
+  <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M7 21l5-10 4 7 3-4 5 8" /></svg></span><span class="ttl">JT808 模拟器</span><span class="ver mono" id="verTag" hidden></span></div>
+  <div class="tb-sep"></div>
+  <div class="tb-cur" id="tbCur"></div>
+  <div id="connPill" class="status st-offline"><span class="dot"></span><span id="connText">离线</span></div>
+  <div class="grow tb-drag"></div>
   <div class="hact">
     <button class="pb dk" data-act="connect" id="btnConnect">上线</button>
     <button class="pb" data-act="disconnect" id="btnDisconnect">断开</button>
     <button class="pb rd" data-act="logout" data-confirm="发送 0003 注销并清除鉴权码？">注销</button>
     <button class="pb icon" id="themeBtn" title="切换浅色/深色主题"><span class="sun">☀</span><span class="moon">☾</span></button>
   </div>
-</header>
-<div class="tbar" id="tbar">
-  <span class="tlbl">终端</span>
-  <div class="tchips" id="tchips"></div>
-  <div class="tops">
-    <button class="pb sm" id="tAdd" title="新增一个默认配置的终端（沿用当前终端的网关地址与协议版本）">＋ 新增</button>
-    <button class="pb sm" id="tClone" title="复制当前终端的配置、参数、区域与位置；手机号、车牌、IMEI 末位递增">复制</button>
-    <button class="pb sm rd" id="tDel" title="删除当前终端">删除</button>
+  <div class="winctl" id="winctl" hidden>
+    <button data-win="min" title="最小化"><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></button>
+    <button data-win="max" title="最大化 / 还原"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></button>
+    <button data-win="close" class="cl" title="关闭"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></button>
   </div>
-  <div class="grow"></div>
-  <button class="pb sm" data-goto="stress" id="tStress" title="批量虚拟终端压力测试">压力测试<span class="badge info" id="tStressN" hidden></span></button>
-</div>
-
+</header>
+<div class="shell">
+<aside class="side">
+  <nav class="snav" id="nav"><a data-page="overview" title="总览"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="nt">总览</span></a><a data-page="motion" title="运动与位置"><svg class="ni" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span class="nt">运动与位置</span></a><a data-page="bits" title="状态与报警"><svg class="ni" viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/></svg><span class="nt">状态与报警</span><span class="badge" id="navAlarm" hidden></span></a><a data-page="uplink" title="上行报文"><svg class="ni" viewBox="0 0 24 24"><path d="M12 20V5M6 11l6-6 6 6"/></svg><span class="nt">上行报文</span></a><a data-page="adas" title="主动安全"><svg class="ni" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/></svg><span class="nt">主动安全</span></a><a data-page="params" title="终端参数"><svg class="ni" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="nt">终端参数</span></a><a data-page="media" title="多媒体与视频"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg><span class="nt">多媒体与视频</span><span class="badge info" id="navStream" hidden></span></a><a data-page="areas" title="区域"><svg class="ni" viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span class="nt">区域</span></a><a data-page="config" title="终端配置"><svg class="ni" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span class="nt">终端配置</span></a><a data-page="stress" title="压力测试"><svg class="ni" viewBox="0 0 24 24"><path d="M3 20h18M6 16v-5M10 16V8M14 16v-7M18 16V5"/></svg><span class="nt">压力测试</span><span class="badge info" id="navStress" hidden></span></a></nav>
+  <div class="sterm">
+    <div class="sterm-h"><span>终端</span><span class="grow"></span>
+      <button class="ib-btn" id="tAdd" title="新增一个默认配置的终端（沿用当前终端的网关地址与协议版本）">＋</button>
+      <button class="ib-btn" id="tClone" title="复制当前终端的配置、参数、区域与位置；手机号、车牌、IMEI 末位递增">⧉</button>
+      <button class="ib-btn rd" id="tDel" title="删除当前终端">－</button>
+    </div>
+    <div class="tchips" id="tchips"></div>
+  </div>
+</aside>
+<div class="work">
 <main class="bento" id="dash">
   <div class="t spd">
     <div class="th">车速<a class="r lnk" data-goto="motion">运动设置 →</a></div>
@@ -100,13 +104,7 @@
 
 <div class="mask" id="mask" hidden></div>
 <section class="sheet" id="sheet" hidden>
-  <div class="sheet-h">
-    <nav class="stabs" id="nav">
-      <a data-page="motion">运动与位置</a><a data-page="bits">状态与报警<span class="badge" id="navAlarm" hidden></span></a><a data-page="uplink">上行报文</a>
-      <a data-page="adas">主动安全</a><a data-page="params">终端参数</a><a data-page="media">多媒体与视频</a><a data-page="areas">区域</a><a data-page="config">终端配置</a><a data-page="stress">压力测试<span class="badge info" id="navStress" hidden></span></a>
-    </nav>
-    <button class="pb dk" id="sheetClose">完成</button>
-  </div>
+  <div class="sheet-h"><h1 id="pageTitle"></h1><button class="pb" id="sheetClose" hidden>完成</button></div>
   <div class="sheet-b" id="content">
       <!-- 运动与位置 -->
       <section class="page" id="page-motion" hidden>
@@ -387,6 +385,9 @@
   </div>
 </section>
 <div class="toasts" id="toasts"></div>
+</div>
+</div>
+<footer class="sbar" id="sbar"><div class="meta" id="meta"></div><span class="grow"></span><span id="sbInfo"></span></footer>
 <div class="modal" id="modal" hidden><div class="modal-box"><p id="modalText"></p><div class="btns r"><button class="btn ghost" id="modalNo">取消</button><button class="btn primary" id="modalYes">确定</button></div></div></div>
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
@@ -395,5 +396,6 @@
 <script src="params.js"></script>
 <script src="log.js"></script>
 <script src="stress.js"></script>
+<script src="desktop.js"></script>
 </body>
 </html>

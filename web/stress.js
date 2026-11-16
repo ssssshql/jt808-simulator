@@ -63,8 +63,8 @@ function stChart(series) {
 }
 function renderStress(v) {
   const s = v.stats, on = v.running;
-  $('#tStressN').hidden = $('#navStress').hidden = !on;
-  $('#tStressN').textContent = $('#navStress').textContent = on ? stNum(s.online) : '';
+  $('#navStress').hidden = !on;
+  $('#navStress').textContent = on ? stNum(s.online) : '';
   if (page !== 'stress') return;
   $('#stState').className = 'tag ' + (on ? 'ok' : '');
   $('#stState').textContent = on ? '运行中' : (v.elapsed ? '已停止' : '未运行');

@@ -87,13 +87,16 @@ $('#themeBtn').onclick = () => {
   if (S) renderRing(S);
 };
 
-// ---------------- 导航：主屏常驻，其余功能在居中弹出面板的标签页中 ----------------
+// ---------------- 导航：左侧栏切换「总览」与各功能页 ----------------
 let page = 'overview';        // 'overview' = 只看主屏；其它 = 弹出面板当前标签
 function go(p) {
   if (!document.getElementById('page-' + p)) p = 'overview';
   page = p;
   const open = p !== 'overview';
-  $('#sheet').hidden = $('#mask').hidden = !open;
+  $('#sheet').hidden = !open;
+  $('#dash').hidden = open;
+  if (!open) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);   // 地图重新计算尺寸
+  $('#pageTitle').textContent = $(`#nav a[data-page="${p}"] .nt`)?.textContent || '';
   document.body.classList.toggle('sheet-open', open);
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.page === p));
   $$('.page').forEach(s => s.hidden = s.id !== 'page-' + p);
@@ -126,6 +129,8 @@ function renderTop(s) {
   $('#navAlarm').hidden = !alarms; $('#navAlarm').textContent = alarms;
   $('#navStream').hidden = !s.streams.length; $('#navStream').textContent = s.streams.length;
   $('#lStat').textContent = `上行 ${k.up} · 下行 ${k.down}`;
+  $('#tbCur').innerHTML = `<b class="mono">${esc(c.phone || '未设置')}</b><span>${esc(s.device.plate || '')}</span>`;
+  $('#sbInfo').textContent = `上行 ${k.up}  ·  下行 ${k.down}`;
 }
 onState(renderTop);
 

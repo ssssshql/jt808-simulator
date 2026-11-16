@@ -11,7 +11,7 @@
 - `jt808sim-<版本>-windows-x64-setup.exe`：安装包，装到 `%LOCALAPPDATA%\Programs\jt808sim`，不需要管理员权限，带开始菜单和桌面快捷方式。
 - `jt808sim-<版本>-windows-x64-portable.zip`：免安装，内含 `jt808sim.exe`（桌面窗口）和 `jt808sim-cli.exe`（命令行版）。
 
-双击 `jt808sim.exe` 打开窗口，界面与 Web 版相同。实现方式：程序在 `127.0.0.1` 随机端口启动内置服务，用 Wails（WebView2）窗口加载，只监听本机。
+双击 `jt808sim.exe` 打开窗口：无边框窗口，标题栏（拖动、双击最大化、最小化/最大化/关闭）、左侧导航和底部状态栏都在页面里绘制；窗口宽度小于 1360 时侧栏收起为图标。实现方式：程序在 `127.0.0.1` 随机端口启动内置服务，用 Wails（WebView2）窗口加载，只监听本机。
 终端状态保存在 `%APPDATA%\jt808sim\state`，卸载或升级都会保留。只允许运行一个实例。
 需要 WebView2 运行库，Windows 10/11 一般已自带。地图瓦片来自 OpenStreetMap，需要联网。
 带任何命令行参数启动时，仍是下面的命令行 / `-web` 模式。
