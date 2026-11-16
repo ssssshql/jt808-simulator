@@ -632,7 +632,7 @@ input:focus, select:focus, textarea:focus { box-shadow: none; border-color: var(
 
 /* 较矮的窗口：压缩总览卡片 */
 @media (max-height: 760px) {
-  .bento { --r1: 96px; --r2: 128px; }
+  .bento { --r1: 92px; --r2: 150px; }
   .big { font-size: 30px; }
 }
 .btn, .btn.sm { height: 30px; border-radius: var(--radius-sm); }
@@ -676,9 +676,27 @@ input:focus, select:focus, textarea:focus { box-shadow: none; border-color: var(
 [data-theme=dark] .map-base button.on { color: #000; }
 .leaflet-container.sat .leaflet-tile-pane, [data-theme=dark] .leaflet-container.sat .leaflet-tile-pane { filter: none; }
 
-/* 工作区较窄（高缩放比例的屏幕或小窗口）：总览改为 4 列，可上下滚动 */
-.work { container-type: inline-size; overflow-y: auto; scrollbar-width: thin; }
+/* 总览始终铺满工作区、不出现滚动条：较窄时日志让出两列给应答策略，较矮时压缩各行 */
+.work { container-type: inline-size; overflow: hidden; }
 @container (max-width: 1120px) {
-  .bento { flex: none; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: 124px 124px 150px 170px 380px;
-    grid-template-areas: "spd mil map map" "spd fuel map map" "st st al al" "up up inbox inbox" "log log log reply"; }
+  .bento { grid-template-areas: "spd mil map map inbox inbox" "spd fuel map map inbox inbox" "st st al al up up" "log log log log reply reply"; }
+  .ups button { padding: 0 8px; }
+  .tg { gap: 4px; }
+  .tg button { padding: 2px 7px; font-size: 11.5px; }
+  .spd .lim { gap: 8px; font-size: 11px; }
+  .log-tools { gap: 8px; }
+  .log-tools #lStat, .log-tools #lCount, .log-tools #lId { display: none; }
+  .log-tools #lText { width: 110px !important; }
 }
+@media (max-height: 700px) {
+  .bento { --r1: 82px; --r2: 146px; }
+  .big { font-size: 26px; }
+  .bento > :where(.t) { padding: 9px 12px; }
+  .th { margin-bottom: 4px; min-height: 20px; }
+  .reply .kv2 { display: none; }
+}
+
+/* 总览卡片内部也不显示滚动条（内容超出时裁切，可滚轮查看） */
+.bento .tg, .bento .inbox { scrollbar-width: none; }
+.bento .tg::-webkit-scrollbar, .bento .inbox::-webkit-scrollbar { display: none; }
+.spd .lim { max-width: 100%; justify-content: center; }
