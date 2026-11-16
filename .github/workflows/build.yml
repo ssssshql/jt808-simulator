@@ -1,0 +1,92 @@
+# 推送 / PR：测试 + 构建 Windows 桌面版（产物可在 Actions 页下载）
+# 推送 v* tag：额外打安装包与免安装 zip，并创建 GitHub Release
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet .
+      - run: go test ./...
+
+  windows:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+      GOOS: windows
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: 版本号
+        id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(git describe --tags --always)"
+          fi
+          NUM="$(echo "${VERSION#v}" | grep -oE '^[0-9]+(\.[0-9]+){0,2}' || true)"
+          NUM="${NUM:-0.0.0}"
+          while [ "$(echo "$NUM" | tr -cd . | wc -c)" -lt 2 ]; do NUM="$NUM.0"; done
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "num=$NUM" >> "$GITHUB_OUTPUT"
+      - name: 图标与清单（syso）
+        run: |
+          GOOS= GOARCH= go install github.com/tc-hib/go-winres@v0.3.3
+          go-winres simply --arch amd64 --icon build/icon.png --manifest gui \
+            --product-name "JT808 模拟器" --file-description "JT808 终端模拟器" \
+            --product-version "${{ steps.v.outputs.num }}.0" --file-version "${{ steps.v.outputs.num }}.0" \
+            --original-filename jt808sim.exe
+      - name: 构建 jt808sim.exe
+        run: |
+          mkdir -p dist
+          go build -tags desktop,production -trimpath \
+            -ldflags "-s -w -H windowsgui -X main.version=${{ steps.v.outputs.version }} -X main.commit=$(git rev-parse --short=8 HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/jt808sim.exe .
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.v.outputs.version }} -X main.commit=$(git rev-parse --short=8 HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/jt808sim-cli.exe .
+      - name: 安装包与 zip
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq nsis zip
+          V="${{ steps.v.outputs.version }}"
+          makensis -V2 -DVERSION="${V#v}" -DSRC="$PWD/dist/jt808sim.exe" -DOUT="$PWD/dist/jt808sim-${V}-windows-x64-setup.exe" build/installer.nsi
+          (cd dist && zip -q "jt808sim-${V}-windows-x64-portable.zip" jt808sim.exe jt808sim-cli.exe)
+          (cd dist && sha256sum *setup.exe *.zip > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jt808sim-${{ steps.v.outputs.version }}-windows-x64
+          path: |
+            dist/*setup.exe
+            dist/*.zip
+            dist/SHA256SUMS
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.v.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*setup.exe
+            dist/*.zip
+            dist/SHA256SUMS

@@ -1,0 +1,13 @@
+# 构建产物
+*.exe
+*.exe~
+jt808sim
+
+# 运行时数据：终端状态（参数、鉴权码、里程等）、日志
+state/
+logs/
+*.log
+
+# Windows 资源（CI 生成）
+*.syso
+dist/

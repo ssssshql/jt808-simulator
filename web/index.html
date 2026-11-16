@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JT808 终端模拟器</title>
+<script>document.documentElement.dataset.theme = localStorage.getItem('jt808.theme') || 'light';</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231d1d1f'/%3E%3Cpath d='M8 20l5-9 4 6 3-4 4 7' stroke='%23c6f432' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="hd">
+  <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M7 21l5-10 4 7 3-4 5 8" /></svg></span><span class="ttl">JT808 终端模拟器</span><span class="ver mono" id="verTag" hidden></span></div>
+  <div class="hp"><div class="meta" id="meta"></div><div id="connPill" class="status st-offline"><span class="dot"></span><span id="connText">离线</span></div></div>
+  <div class="grow"></div>
+  <nav class="hnav">
+    <button class="pb" data-goto="motion">运动</button><button class="pb" data-goto="params">参数</button><button class="pb" data-goto="areas">区域</button>
+    <button class="pb" data-goto="media">多媒体<span class="badge info" id="navStream" hidden></span></button><button class="pb" data-goto="config">配置</button>
+  </nav>
+  <div class="hact">
+    <button class="pb dk" data-act="connect" id="btnConnect">上线</button>
+    <button class="pb" data-act="disconnect" id="btnDisconnect">断开</button>
+    <button class="pb rd" data-act="logout" data-confirm="发送 0003 注销并清除鉴权码？">注销</button>
+    <button class="pb icon" id="themeBtn" title="切换浅色/深色主题"><span class="sun">☀</span><span class="moon">☾</span></button>
+  </div>
+</header>
+<div class="tbar" id="tbar">
+  <span class="tlbl">终端</span>
+  <div class="tchips" id="tchips"></div>
+  <div class="tops">
+    <button class="pb sm" id="tAdd" title="新增一个默认配置的终端（沿用当前终端的网关地址与协议版本）">＋ 新增</button>
+    <button class="pb sm" id="tClone" title="复制当前终端的配置、参数、区域与位置；手机号、车牌、IMEI 末位递增">复制</button>
+    <button class="pb sm rd" id="tDel" title="删除当前终端">删除</button>
+  </div>
+  <div class="grow"></div>
+  <button class="pb sm" data-goto="stress" id="tStress" title="批量虚拟终端压力测试">压力测试<span class="badge info" id="tStressN" hidden></span></button>
+</div>
+
+<main class="bento" id="dash">
+  <div class="t spd">
+    <div class="th">车速<a class="r lnk" data-goto="motion">运动设置 →</a></div>
+    <div class="ring" id="ring"></div>
+    <div class="lim"><span>限速 <b id="spLim">-</b></span><span>方向 <b id="spDir">-</b></span><span>模式 <b id="spMode">-</b></span></div>
+  </div>
+  <div class="t mil">
+    <div class="th">总里程<span class="r" id="milRule"></span></div>
+    <div class="big" id="milV">-</div>
+    <div class="foot" id="milFoot"></div>
+  </div>
+  <div class="t fuel">
+    <div class="th">油量<span class="r">卫星 <b class="mono" id="fSats">-</b> · 信号 <b class="mono" id="fSig">-</b></span></div>
+    <div class="big" id="fuelV">-</div>
+    <div class="fbar"><i id="fuelBar"></i></div>
+  </div>
+  <div class="t mapt">
+    <div class="map" id="mapOv"></div>
+    <div class="fl tl"><b>实时位置</b> <span class="mono" id="ovPos"></span></div>
+    <div class="fl bl" id="ovMapInfo"></div>
+  </div>
+  <div class="t inbox-t">
+    <div class="th"><b>平台下发</b><span id="inboxN"></span></div>
+    <div class="inbox" id="inbox"></div>
+  </div>
+  <div class="t st">
+    <div class="th"><b>状态位</b><span class="mono" id="hexStatusOv"></span><a class="r lnk" data-goto="bits">全部状态 →</a></div>
+    <div class="tg" id="ovStatus"></div>
+  </div>
+  <div class="t al" id="alTile">
+    <div class="th"><b>报警位</b><span id="alCount">无报警</span><span class="r"><a class="lnk" data-goto="adas">主动安全</a> · <a class="lnk" data-goto="bits">全部</a> · <button class="lnk rd" data-act="clearAlarms">清除</button></span></div>
+    <div class="tg" id="ovAlarms"></div>
+  </div>
+  <div class="t up">
+    <div class="th"><b>快捷上行</b>需应答的会超时重传<a class="r lnk" data-goto="uplink">全部消息 →</a></div>
+    <div class="ups" id="ups"></div>
+  </div>
+  <div class="t logt" id="logTile">
+    <div class="th log-tools">
+      <b>报文日志</b><span id="lStat"></span>
+      <div class="seg sm" id="lDir"><button data-d="" class="on">全部</button><button data-d="up">上行</button><button data-d="down">下行</button><button data-d="sys">系统</button><button data-d="err">错误</button></div>
+      <input id="lId" class="mono sm" placeholder="消息 ID" style="width:96px">
+      <input id="lText" class="sm" placeholder="搜索摘要" style="width:130px">
+      <label class="switch sm"><input type="checkbox" id="lHb" checked><span></span>隐藏心跳</label>
+      <div class="grow"></div>
+      <span class="muted" id="lCount"></span>
+      <button class="lnk" id="lPause">暂停</button><button class="lnk" id="lClear">清空</button><button class="lnk" id="lMax" title="放大 / 还原">放大</button>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+  <div class="t reply">
+    <div class="th"><b>应答策略</b></div>
+    <div class="vs" id="replySeg">
+      <button data-r="auto">正常<span>按指令处理</span></button><button data-r="fail">失败<span>0001 结果 1</span></button>
+      <button data-r="unsupported">不支持<span>0001 结果 3</span></button><button data-r="none">不应答<span>平台超时</span></button>
+    </div>
+    <div class="delay"><span>应答延迟</span><div class="input-unit"><input id="replyDelay" type="number" min="0" max="120" step="0.5"><span>秒</span></div><button class="lnk" id="replyDelaySet">应用</button></div>
+    <div class="kv2" id="replyKV"></div>
+  </div>
+</main>
+
+<div class="mask" id="mask" hidden></div>
+<section class="sheet" id="sheet" hidden>
+  <div class="sheet-h">
+    <nav class="stabs" id="nav">
+      <a data-page="motion">运动与位置</a><a data-page="bits">状态与报警<span class="badge" id="navAlarm" hidden></span></a><a data-page="uplink">上行报文</a>
+      <a data-page="adas">主动安全</a><a data-page="params">终端参数</a><a data-page="media">多媒体与视频</a><a data-page="areas">区域</a><a data-page="config">终端配置</a><a data-page="stress">压力测试<span class="badge info" id="navStress" hidden></span></a>
+    </nav>
+    <button class="pb dk" id="sheetClose">完成</button>
+  </div>
+  <div class="sheet-b" id="content">
+      <!-- 运动与位置 -->
+      <section class="page" id="page-motion" hidden>
+        <div class="page-head"><h1>运动与位置</h1><p class="sub">模拟车辆行驶，自动判定超速、疲劳、区域等报警</p></div>
+        <div class="grid g-motion">
+          <div class="col">
+            <div class="card">
+              <div class="card-h"><h2>运动模式</h2></div>
+              <div class="seg block" id="modeSeg">
+                <button data-m="stop">停车</button><button data-m="drive">随机</button><button data-m="circle">绕圈</button><button data-m="route">沿路线</button><button data-m="track">轨迹回放</button>
+              </div>
+              <p class="hint">“沿路线”优先使用平台下发的路线（8606），否则使用内置的天河巡航路线；“轨迹回放”使用下方导入的轨迹。</p>
+              <div class="field" style="margin-top:14px"><label class="lbl">目标速度 <b class="mono" id="spdV"></b></label>
+                <input type="range" id="spd" min="0" max="160" step="5"></div>
+            </div>
+            <div class="card" id="replayCard">
+              <div class="card-h"><h2>轨迹回放</h2><span class="tag" id="rpTag"></span><div class="grow"></div>
+                <button class="btn sm" id="rpImport">导入 GPX / CSV</button>
+                <input type="file" id="rpFile" accept=".gpx,.csv,.txt,.xml,application/gpx+xml,text/csv" hidden></div>
+              <div class="rp-info" id="rpInfo"></div>
+              <div class="rp-ctl" id="rpCtl">
+                <input type="range" id="rpSeek" min="0" max="1000" step="1" title="拖动跳转">
+                <div class="field-row">
+                  <label class="lbl" for="rpMult">倍速</label>
+                  <select id="rpMult"><option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option><option value="20">20×</option><option value="50">50×</option></select>
+                  <label class="switch sm"><input type="checkbox" id="rpLoop"><span></span>循环</label>
+                  <div class="grow"></div>
+                  <button class="btn sm primary" id="rpPlay">开始回放</button><button class="btn sm" id="rpRestart">从头</button><button class="btn sm ghost danger" id="rpClear">移除</button>
+                </div>
+              </div>
+              <p class="hint">CSV 每行 <span class="mono">lng,lat[,speed,time,alt,dir]</span>（速度 km/h，可带表头，逗号/分号/制表符分隔）；GPX 读取 trkpt/rtept 的 ele、time、speed、course。带时间戳按时间回放，否则按点速度（或目标速度）沿线行驶。</p>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>位置</h2><div class="grow"></div><label class="switch sm"><input type="checkbox" id="pickMap"><span></span>点击地图设定</label></div>
+              <div class="form2">
+                <div class="field"><label class="lbl">经度</label><input id="pLng" class="mono"></div>
+                <div class="field"><label class="lbl">纬度</label><input id="pLat" class="mono"></div>
+              </div>
+              <div class="btns"><button class="btn primary sm" id="setPos">设定位置并上报</button><button class="btn sm" data-act="report">立即上报 0200</button></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>里程与油量</h2></div>
+              <div class="form2">
+                <div class="field"><label class="lbl">总里程</label><div class="input-unit"><input id="vMil" type="number" step="0.1" min="0"><span>km</span></div></div>
+                <div class="field"><label class="lbl">油量</label><div class="input-unit"><input id="vFuel" type="number" step="0.1" min="0"><span>L</span></div></div>
+              </div>
+              <div class="btns"><button class="btn sm" id="setVeh">应用</button></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>驾驶员</h2><div class="grow"></div><span class="tag" id="drvState"></span></div>
+              <dl class="kv" id="drvKV"></dl>
+              <div class="btns"><button class="btn sm primary" id="cardIn">插卡上班 0702</button><button class="btn sm" id="cardOut">拔卡下班 0702</button>
+                <a class="link" data-goto="config" data-anchor="cfgDriver">编辑驾驶员信息 →</a></div>
+            </div>
+          </div>
+          <div class="card map-card">
+            <div class="card-h"><h2>轨迹与区域</h2><span class="muted mono" id="mPos"></span><div class="grow"></div>
+              <button class="btn sm" id="fitMap">适应视野</button><button class="btn sm" id="clearTrack">清空轨迹</button></div>
+            <div class="map tall" id="mapMotion"></div>
+            <div class="stat-strip" id="motionStats"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 状态与报警 -->
+      <section class="page" id="page-bits" hidden>
+        <div class="page-head"><h1>状态与报警</h1><p class="sub">点击切换位；变化后立即上报 0200。灰色斜纹的位由模拟器根据位置/速度计算。</p></div>
+        <div class="card">
+          <div class="card-h"><h2>状态位</h2><span class="muted">0200 状态（DWORD）</span><div class="grow"></div><span class="mono muted" id="hexStatus"></span></div>
+          <div class="bits" id="bStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h2>报警位</h2><span class="muted">0200 报警标志（DWORD）</span><div class="grow"></div><span class="mono muted" id="hexAlarm"></span>
+            <button class="btn sm ghost danger" data-act="clearAlarms">清除报警</button></div>
+          <div class="bits alarm" id="bAlarm"></div>
+        </div>
+        <div class="grid g2">
+          <div class="card">
+            <div class="card-h"><h2>视频报警</h2><span class="muted">附加信息 0x14</span></div>
+            <div class="bits alarm" id="bVideo"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>IO 状态位</h2><span class="muted">附加信息 0x2A</span></div>
+            <div class="bits" id="bIO"></div>
+            <div class="divider"></div>
+            <div class="card-h compact"><h3>模拟量</h3><span class="muted">附加信息 0x2B（bit0-15 AD0，bit16-31 AD1）</span></div>
+            <div class="field-row"><label class="lbl">AD0</label><input id="ad0" type="number" min="0" max="65535">
+              <label class="lbl">AD1</label><input id="ad1" type="number" min="0" max="65535"><button class="btn sm" id="adSet">应用</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h2>扩展车辆信号状态位</h2><span class="muted">附加信息 0x25</span><div class="grow"></div><span class="mono muted" id="hexSignal"></span></div>
+          <div class="bits" id="bSignal"></div>
+        </div>
+      </section>
+
+      <!-- 上行报文 -->
+      <section class="page" id="page-uplink" hidden>
+        <div class="page-head"><h1>上行报文</h1><p class="sub">手动发送终端上行消息；需要应答的消息按 0x0002/0x0003 超时重传</p></div>
+        <div class="grid g-up">
+          <div class="card"><div class="card-h"><h2>消息</h2></div><div class="msg-list" id="upList"></div></div>
+          <div class="col">
+            <div class="card"><div class="card-h"><h2 id="upTitle"></h2><span class="tag mono" id="upId"></span></div>
+              <div class="form2" id="upForm"></div><div class="btns"><button class="btn primary" id="upSend">发送</button></div></div>
+            <div class="card"><div class="card-h"><h2>原始报文</h2><span class="muted">按当前终端版本组帧（自动转义、校验）</span></div>
+              <div class="field"><label class="lbl">消息ID 与 hex 消息体</label>
+                <input id="rawLine" class="mono" placeholder="例：0900 F0 48454C4C4F"></div>
+              <div class="btns"><button class="btn primary" id="rawSend">发送原始报文</button></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 主动安全 -->
+      <section class="page" id="page-adas" hidden>
+        <div class="page-head"><h1>主动安全</h1><p class="sub">苏标 JSATL12 / 粤标 T/GDRTA 002-2020 报警（0200 附加信息 0x64~0x67），平台下发 9208 后自动上传附件</p></div>
+        <div class="card std-card">
+          <div class="card-h"><h2>主动安全标准</h2><span class="tag" id="stdTag"></span></div>
+          <div class="seg block" id="adasStd"><button data-std="jsatl">苏标 JSATL12</button><button data-std="gd">粤标 T/GDRTA 002-2020</button></div>
+          <p class="hint" id="stdHint"></p>
+          <p class="hint warn-text" id="stdWarn" hidden></p>
+        </div>
+        <div class="grid g2">
+          <div class="card">
+            <div class="card-h"><h2>上报报警</h2></div>
+            <div class="seg block" id="adasKind"><button data-k="adas">ADAS 0x64</button><button data-k="dsm">DSM 0x65</button><button data-k="tpms">TPMS 0x66</button><button data-k="bsd">BSD 0x67</button></div>
+            <div class="form2" style="margin-top:14px">
+              <div class="field span2"><label class="lbl" for="aType">报警类型</label><select id="aType"></select></div>
+              <div class="field"><label class="lbl" for="aLevel">报警级别</label><select id="aLevel"><option value="1">一级报警</option><option value="2">二级报警</option></select></div>
+              <div class="field"><label class="lbl" for="aFiles">附件数量</label><div class="input-unit"><input id="aFiles" type="number" value="3" min="0" max="10"><span>个</span></div></div>
+              <div class="field span2"><label class="lbl" for="aFlag">标志状态</label><select id="aFlag"><option value="-1">自动（报警=开始，事件=不可用）</option><option value="1">0x01 开始标志</option><option value="2">0x02 结束标志</option><option value="0">0x00 不可用</option></select></div>
+            </div>
+            <div class="btns"><button class="btn primary" id="aSend">上报报警</button></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>附件上传</h2></div>
+            <div class="stack"><label class="switch"><input type="checkbox" id="adasAuto"><span></span>收到 9208 自动连接附件服务器上传</label>
+            <div class="field"><label class="lbl" for="adasHost">附件服务器 IP 覆盖</label><input id="adasHost" placeholder="为空时使用 9208 下发的地址"></div></div>
+            <div class="btns"><button class="btn sm" id="adasHostSet">保存</button></div>
+            <p class="hint" id="attachHint"></p>
+          </div>
+        </div>
+        <div class="grid g2" id="gdCards" hidden>
+          <div class="card">
+            <div class="card-h"><h2>外设状态与信息</h2><span class="tag info">0900 透传 F7 / F8</span></div>
+            <div class="seg block" id="gdPer"><button data-p="100">ADAS</button><button data-p="101">DSM</button><button data-p="102">TPMS</button><button data-p="103">BSD</button></div>
+            <div class="form2" style="margin-top:14px">
+              <div class="field span2"><label class="lbl" for="gpWork">工作状态</label><select id="gpWork"></select></div>
+              <div class="field span2"><label class="lbl">报警状态</label><div class="bitgrid" id="gpAlarm"></div></div>
+              <div class="field"><label class="lbl" for="gp_company">公司名称</label><input id="gp_company" maxlength="32"></div>
+              <div class="field"><label class="lbl" for="gp_model">产品型号</label><input id="gp_model" maxlength="32"></div>
+              <div class="field"><label class="lbl" for="gp_hwVer">硬件版本号</label><input id="gp_hwVer" maxlength="32"></div>
+              <div class="field"><label class="lbl" for="gp_swVer">软件版本号</label><input id="gp_swVer" maxlength="32"></div>
+              <div class="field"><label class="lbl" for="gp_devId">设备 ID</label><input id="gp_devId" maxlength="32"></div>
+              <div class="field"><label class="lbl" for="gp_customer">客户代码</label><input id="gp_customer" maxlength="32"></div>
+            </div>
+            <div class="btns"><button class="btn primary sm" id="gpSave">保存外设</button><button class="btn sm" id="gpF7">上报状态 F7</button><button class="btn sm" id="gpF8">上报信息 F8</button></div>
+            <p class="hint">平台 8900（类型 0xF7/0xF8 + 外设 ID 列表）查询时自动以 0900 应答；外设 ID 列表为空时上报全部外设。工作状态为“断开连接”的外设升级时回“未找到目标设备”。</p>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>异常信息与升级模拟</h2></div>
+            <div class="form2">
+              <div class="field"><label class="lbl" for="gdInst">安装异常 0xF1</label><input id="gdInst" class="mono" placeholder="0 = 不附带"></div>
+              <div class="field"><label class="lbl" for="gdAlgo">算法异常 0xF2</label><input id="gdAlgo" class="mono" placeholder="0 = 不附带"></div>
+              <div class="field span2"><label class="lbl" for="gdSim">下次 8105 升级结果</label><select id="gdSim"></select></div>
+            </div>
+            <div class="btns"><button class="btn sm" id="gdSetBtn">保存</button></div>
+            <p class="hint">0xF1/0xF2 为厂家自定义 DWORD（可输入 0x 开头十六进制），非 0 时附带在每条 0200 中。8105 命令字 1 按升级文件名 <span class="mono">设备类型_厂家编号_设备型号_依赖版本_软件版本.后缀</span> 判断升级对象（01 终端 03 ADAS 04 DSM 05 BSD 06 TPMS），逐步上报 0x1FC4 升级进度，最后 0108 升级结果。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 终端参数 -->
+      <section class="page" id="page-params" hidden>
+        <div class="page-head row"><div><h1>终端参数</h1><p class="sub">平台可通过 8103 设置、8104/8106 查询；这里修改后立即对模拟器生效</p></div>
+          <div class="grow"></div>
+          <div class="btns"><button class="btn" id="pReset" data-confirm="把全部终端参数恢复为默认值？">恢复默认参数</button></div></div>
+        <div class="param-bar">
+          <div class="chips tabs" id="pGroups"></div>
+          <div class="grow"></div>
+          <div class="search"><input id="pFilter" placeholder="搜索 ID / 名称"></div>
+        </div>
+        <div id="pList" class="param-list"></div>
+        <div class="savebar" id="saveBar" hidden>
+          <span id="saveBarText"></span><div class="grow"></div>
+          <button class="btn ghost" id="pDiscard">放弃修改</button><button class="btn primary" id="pSave">保存修改</button>
+        </div>
+      </section>
+
+      <!-- 多媒体与视频 -->
+      <section class="page" id="page-media" hidden>
+        <div class="page-head"><h1>多媒体与视频</h1><p class="sub">拍照 / 录音 / 多媒体检索与上传；JT/T 1078 实时音视频与回放</p></div>
+        <div class="grid g2">
+          <div class="card">
+            <div class="card-h"><h2>拍照上传</h2></div>
+            <div class="btns" id="photoBtns"></div>
+            <p class="hint">生成真实 JPEG（带通道号与时间水印），0800 事件 + 0801 数据上传。</p>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>音视频推流</h2><span class="tag" id="streamN"></span></div>
+            <div id="streams"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h2>多媒体记录</h2><span class="tag" id="mediaN"></span></div>
+          <div class="table-wrap"><table><thead><tr><th>多媒体 ID</th><th>类型</th><th>通道</th><th>事件</th><th>时间</th><th class="r">大小</th></tr></thead><tbody id="mBody"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- 区域 -->
+      <section class="page" id="page-areas" hidden>
+        <div class="page-head row"><div><h1>区域</h1><p class="sub">平台下发的圆形 / 矩形 / 多边形区域与路线（8600~8607），进出报警按区域属性判定</p></div>
+          <div class="grow"></div><button class="btn ghost danger" id="areaClear" data-confirm="删除本地保存的全部区域与路线？">删除全部</button></div>
+        <div class="card"><div class="map tall" id="mapAreas"></div></div>
+        <div class="card">
+          <div class="table-wrap"><table><thead><tr><th>类型</th><th>ID</th><th>名称</th><th>属性</th><th>点数</th><th>限速</th><th>时间</th><th></th></tr></thead><tbody id="arBody"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- 终端配置 -->
+      <section class="page" id="page-config" hidden>
+        <div class="page-head row"><div><h1>终端配置</h1><p class="sub">当前终端按手机号保存在 state/&lt;手机号&gt;.json（终端清单在 state/terminals.json），重启后保留；修改手机号会加载该手机号保存的状态</p></div>
+          <div class="grow"></div>
+          <div class="btns"><button class="btn" id="profExport">导出终端档案</button><button class="btn" id="profImport">导入终端档案</button>
+            <input type="file" id="profFile" accept=".json,application/json" hidden></div></div>
+        <div class="grid g2">
+          <div class="card">
+            <div class="card-h"><h2>连接</h2><span class="tag warn" id="cfgLock" hidden>在线时不能修改服务器/传输方式/手机号/版本</span></div>
+            <div class="form2" id="cfgConn"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>行为</h2></div>
+            <div class="stack" id="cfgBehave"></div>
+          </div>
+          <div class="card span2">
+            <div class="card-h"><h2>车辆与设备</h2><span class="muted">注册 0100、鉴权 0102、属性 0107 使用</span></div>
+            <div class="form3" id="cfgDev"></div>
+          </div>
+          <div class="card" id="cfgDriver">
+            <div class="card-h"><h2>驾驶员</h2><span class="muted">0702 插卡上报</span></div>
+            <div class="form2" id="drvForm"></div>
+            <div class="btns"><button class="btn primary sm" id="drvSave">保存驾驶员</button></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>行驶记录仪</h2><span class="muted">GB/T 19056，8700/8701</span></div>
+            <div class="form2" id="recForm"></div>
+            <div class="btns"><button class="btn primary sm" id="recSave">保存记录仪参数</button></div>
+          </div>
+        </div>
+        <div class="savebar" id="cfgBar" hidden><span>终端配置有未保存的修改</span><div class="grow"></div>
+          <button class="btn ghost" id="cfgDiscard">放弃</button><button class="btn primary" id="cfgSave">保存配置</button></div>
+      </section>
+
+      <!-- 压力测试 -->
+      <section class="page" id="page-stress" hidden>
+        <div class="page-head row"><div><h1>压力测试</h1><p class="sub">批量虚拟终端执行注册 / 鉴权 / 心跳 / 位置汇报，测试网关承载能力；与上方的模拟终端互不影响（最多 2000 个，全进程共用一组）</p></div>
+          <div class="grow"></div>
+          <div class="btns"><button class="btn" id="stFromTerm">使用当前终端的网关</button><button class="btn primary" id="stStart">开始压测</button><button class="btn danger" id="stStop">停止</button></div></div>
+        <div class="grid g-stress">
+          <div class="card">
+            <div class="card-h"><h2>参数</h2><span class="tag" id="stState"></span></div>
+            <div class="form2" id="stForm"></div>
+          </div>
+          <div class="col">
+            <div class="st-kpis" id="stKpis"></div>
+            <div class="card">
+              <div class="card-h"><h2>收发速率</h2><span class="muted">最近 2 分钟，条/秒</span><div class="grow"></div>
+                <span class="legend"><i class="l-sent"></i>发送<i class="l-recv"></i>接收<i class="l-on"></i>在线</span></div>
+              <div class="spark" id="stChart"></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>明细</h2><span class="muted" id="stElapsed"></span></div>
+              <dl class="kv st-kv" id="stKV"></dl>
+              <p class="hint err-text" id="stErr" hidden></p>
+            </div>
+          </div>
+        </div>
+      </section>
+  </div>
+</section>
+<div class="toasts" id="toasts"></div>
+<div class="modal" id="modal" hidden><div class="modal-box"><p id="modalText"></p><div class="btns r"><button class="btn ghost" id="modalNo">取消</button><button class="btn primary" id="modalYes">确定</button></div></div></div>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="app.js"></script>
+<script src="map.js"></script>
+<script src="pages.js"></script>
+<script src="params.js"></script>
+<script src="log.js"></script>
+<script src="stress.js"></script>
+</body>
+</html>
