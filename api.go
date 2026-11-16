@@ -131,6 +131,7 @@ func newWebMux(m *Manager) http.Handler {
 		v.Web = build
 		writeJSON(w, 200, v)
 	})
+	registerUpdateAPI(mux)
 	// 终端级接口：/api/t/{id}/xxx；旧接口 /api/xxx 作用于默认终端（兼容脚本与旧页面）
 	handle := func(pattern string, h termHandler) {
 		method, path, _ := strings.Cut(pattern, " ")

@@ -21,6 +21,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 func init() { desktopMain = runDesktop }
@@ -80,6 +81,7 @@ func runDesktop() {
 			}),
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "jt808sim-desktop-5f1c2e"},
+		OnStartup:          func(ctx context.Context) { updateQuit = func() { m.SaveAll(); wruntime.Quit(ctx) } },
 		OnShutdown:         func(ctx context.Context) { m.SaveAll() },
 		Windows: &windows.Options{
 			WebviewUserDataPath: filepath.Join(filepath.Dir(stateDir), "webview"),
