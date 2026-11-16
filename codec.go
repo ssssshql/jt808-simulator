@@ -165,15 +165,24 @@ func Parse(raw []byte) *Msg {
 	m.RSA = props&(1<<10) != 0
 	pos := 10
 	if props&(1<<14) != 0 {
+		if len(d) < 17 { // 2019 头被截断：版本(1)+手机号(10)+流水号(2)
+			return nil
+		}
 		m.Version = 1
 		m.Phone = strings.TrimLeft(hex.EncodeToString(d[5:15]), "0")
 		pos = 15
 	} else {
 		m.Phone = strings.TrimLeft(hex.EncodeToString(d[4:10]), "0")
 	}
+	if len(d) < pos+2 {
+		return nil
+	}
 	m.Serial = int(binary.BigEndian.Uint16(d[pos:]))
 	pos += 2
-	if props&(1<<13) != 0 && len(d) >= pos+4 {
+	if props&(1<<13) != 0 {
+		if len(d) < pos+4 { // 声明了分包但总包数/序号被截断
+			return nil
+		}
 		m.Total = int(binary.BigEndian.Uint16(d[pos:]))
 		m.Index = int(binary.BigEndian.Uint16(d[pos+2:]))
 		pos += 4
@@ -196,6 +205,9 @@ func (m *Msg) String() string {
 // FrameReader 按 0x7e 切帧
 type FrameReader struct{ buf []byte }
 
+// maxFrameBuf 半帧（只有起始 0x7e、没有结尾）缓冲上限，超过即丢弃，防对端撑爆内存
+const maxFrameBuf = 1 << 20
+
 func (r *FrameReader) Feed(data []byte) []*Msg {
 	r.buf = append(r.buf, data...)
 	var out []*Msg
@@ -208,6 +220,9 @@ func (r *FrameReader) Feed(data []byte) []*Msg {
 		e := bytes.IndexByte(r.buf[s+1:], 0x7e)
 		if e < 0 {
 			r.buf = r.buf[s:]
+			if len(r.buf) > maxFrameBuf {
+				r.buf = r.buf[:0]
+			}
 			return out
 		}
 		e += s + 1
@@ -387,6 +402,9 @@ func parse9208(version int, b []byte) (*Info9208, error) {
 	flagLen, rsv := 7+6+2+1, 1
 	if version >= V2019 {
 		flagLen, rsv = 30+6+2+2, 2
+	}
+	if len(b) < 5 {
+		return nil, fmt.Errorf("9208 body too short: %d", len(b))
 	}
 	n := int(b[0])
 	p := 5 + n

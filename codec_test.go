@@ -24,6 +24,40 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+// 畸形帧不得 panic：截断的 2019 头、截断的分包头、空 body 的 9208
+func TestParseMalformed(t *testing.T) {
+	// 13 字节（过长度门槛）但置了版本位：2019 头至少需要 18 字节（含校验）
+	short := []byte{0x02, 0x00, 0x40, 0x00, 0x01, 1, 2, 3, 4, 5, 6, 7, 8}
+	if m := Parse(short); m != nil {
+		t.Fatalf("截断 2019 头应返回 nil: %+v", m)
+	}
+	// 2013 头声明分包但总包数/序号被截断（13 字节只够到流水号）
+	truncSub := []byte{0x02, 0x00, 0x20, 0x00, 1, 2, 3, 4, 5, 6, 0, 1, 0}
+	if m := Parse(truncSub); m != nil {
+		t.Fatalf("截断分包头应返回 nil: %+v", m)
+	}
+	// 随机短切片不 panic
+	for n := 0; n < 24; n++ {
+		Parse(make([]byte, n))
+	}
+	if _, err := parse9208(V2019, nil); err == nil {
+		t.Fatal("空 9208 body 应报错")
+	}
+}
+
+// fuzz Parse + FrameReader：任意字节序列不得 panic
+func FuzzParse(f *testing.F) {
+	f.Add(Frame(0x0200, "13800000001", 1, bLocation(Loc{113.26, 23.12, 40, 90}, nil), V2019, 0, 0))
+	f.Add([]byte{0x7e, 0x02, 0x00, 0x40, 0x00, 0x01, 0x7d, 0x02, 0x7e})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var r FrameReader
+		for _, m := range r.Feed(data) {
+			_ = m.String()
+		}
+		Parse(data)
+	})
+}
+
 // 设置 JT808_DUMP=文件路径 时导出各类上行帧（hex），用于与网关 Java 解码器交叉验证
 func TestDump(t *testing.T) {
 	path := os.Getenv("JT808_DUMP")
