@@ -29,6 +29,14 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags desktop,production -ldfla
 
 图标与清单由 CI 用 `go-winres` 从 `build/icon.png` 生成，安装包脚本为 `build/installer.nsi`。
 
+### 检查更新
+
+桌面版启动后会检查 GitHub 上的最新发布（之后每 6 小时一次，点标题栏的版本号可手动检查）。有新版本时标题栏出现「新版本」标记并弹窗显示更新说明：
+
+- 安装版：点「立即更新」，程序下载安装包、按 `SHA256SUMS` 校验后启动安装程序并自动退出，装完即是新版本；终端状态保留。
+- 便携版：点「去下载」打开发布页，手动替换 exe。
+- 「跳过此版本」后不再自动提醒该版本，手动检查仍会显示。
+
 ## 构建
 
 需要 Go 1.25+（go.mod 指定 `toolchain go1.26.10`，旧版 go 命令会自动下载该工具链；CI 同样使用 go1.26.10）。
