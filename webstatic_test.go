@@ -17,12 +17,17 @@ func TestWebStatic(t *testing.T) {
 		return w, string(b)
 	}
 	w, body := get("/")
+	for _, js := range []string{"scenario.js", "fleet.js"} {
+		if !strings.Contains(body, `src="`+js+`?v=`) {
+			t.Errorf("index 未引用 %s", js)
+		}
+	}
 	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-cache" || !strings.Contains(body, `href="style.css?v=`+ver+`"`) ||
 		!strings.Contains(body, `src="pages.js?v=`+ver+`"`) || !strings.Contains(body, `src="vendor/leaflet/leaflet.js?v=`+ver+`"`) || !strings.Contains(body, `content="`+ver+`"`) {
 		t.Fatalf("index: %d %v", w.Code, w.Header())
 	}
 	for path, ct := range map[string]string{"/style.css": "text/css", "/app.js": "javascript", "/pages.js": "javascript", "/params.js": "javascript",
-		"/log.js": "javascript", "/map.js": "javascript", "/vendor/leaflet/leaflet.css": "text/css", "/vendor/leaflet/leaflet.js": "javascript", "/vendor/leaflet/images/layers.png": "image/png"} {
+		"/log.js": "javascript", "/map.js": "javascript", "/scenario.js": "javascript", "/fleet.js": "javascript", "/stress.js": "javascript", "/vendor/leaflet/leaflet.css": "text/css", "/vendor/leaflet/leaflet.js": "javascript", "/vendor/leaflet/images/layers.png": "image/png"} {
 		w, b := get(path + "?v=" + ver)
 		if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), ct) || len(b) == 0 || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
 			t.Errorf("%s: %d %q %q", path, w.Code, w.Header().Get("Content-Type"), w.Header().Get("Cache-Control"))

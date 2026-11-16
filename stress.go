@@ -126,11 +126,23 @@ type Stress struct {
 	lastErr string
 	series  []stressSample
 	cur     stressSample
+	reason  string // 停止原因
+
+	// 报告用：全程采样（超过 3600 点时隔点抽稀，stride 秒一个点）与峰值/均值
+	all                []stressSample
+	stride, tick       int
+	peakOn, peakConn   int64
+	peakSent, peakRecv float64
+	onSum, onN         int64
+	lastReport         *StressReport
+	resMu              sync.Mutex
+	res                []float32 // 应答延迟蓄水池抽样（毫秒），报告计算精确分位数
+	resN               int64
 
 	spawned, connected, online                     atomic.Int64
 	sent, recv, acks, nacks, timeouts, reconnects  atomic.Int64
 	regOK, regFail, authFail, connFail, sendErrors atomic.Int64
-	latSum, latN                                   atomic.Int64 // 微秒
+	latSum, latN, latMax                           atomic.Int64 // 微秒
 	hist                                           [14]atomic.Int64
 	winHist                                        [14]atomic.Int64 // 当前 1 秒窗口
 }
@@ -148,15 +160,19 @@ func (s *Stress) Start(c StressConfig) error {
 	}
 	s.wg.Wait() // 上一轮的虚拟终端已全部退出
 	s.cfg, s.running, s.stop, s.started, s.ended, s.lastErr = c, true, make(chan struct{}), time.Now(), time.Time{}, ""
-	s.series, s.cur = nil, stressSample{}
+	s.series, s.cur, s.reason = nil, stressSample{}, ""
+	s.all, s.stride, s.tick, s.peakOn, s.peakConn, s.peakSent, s.peakRecv, s.onSum, s.onN = nil, 1, 0, 0, 0, 0, 0, 0, 0
 	for _, a := range []*atomic.Int64{&s.spawned, &s.connected, &s.online, &s.sent, &s.recv, &s.acks, &s.nacks, &s.timeouts, &s.reconnects,
-		&s.regOK, &s.regFail, &s.authFail, &s.connFail, &s.sendErrors, &s.latSum, &s.latN} {
+		&s.regOK, &s.regFail, &s.authFail, &s.connFail, &s.sendErrors, &s.latSum, &s.latN, &s.latMax} {
 		a.Store(0)
 	}
 	for i := range s.hist {
 		s.hist[i].Store(0)
 		s.winHist[i].Store(0)
 	}
+	s.resMu.Lock()
+	s.res, s.resN = nil, 0
+	s.resMu.Unlock()
 	stop := s.stop
 	s.wg.Add(1)
 	go s.spawnLoop(c, stop)
@@ -174,8 +190,14 @@ func (s *Stress) Stop(reason string) {
 	}
 	s.running = false
 	s.ended = time.Now()
+	s.reason = reason
 	close(s.stop)
 	s.mu.Unlock()
+	if r, err := s.saveReport(); err != nil {
+		errf("保存压测报告失败: %v", err)
+	} else {
+		hub.add(LogEntry{Dir: "sys", Summary: "压测报告已生成：" + r.ID})
+	}
 	hub.add(LogEntry{Dir: "sys", Summary: fmt.Sprintf("压力测试停止（%s）：发送 %d 条，接收 %d 条，应答 %d，超时 %d，重连 %d",
 		reason, s.sent.Load(), s.recv.Load(), s.acks.Load(), s.timeouts.Load(), s.reconnects.Load())})
 }
@@ -234,6 +256,7 @@ func (s *Stress) sampleLoop(stop chan struct{}) {
 			if len(s.series) > 120 {
 				s.series = s.series[len(s.series)-120:]
 			}
+			s.record(smp)
 			s.mu.Unlock()
 		}
 	}
@@ -263,8 +286,15 @@ func histQuantile(h []int64, q float64) float64 {
 
 func (s *Stress) observe(d time.Duration) {
 	ms := float64(d.Microseconds()) / 1000
+	for us := d.Microseconds(); ; {
+		cur := s.latMax.Load()
+		if us <= cur || s.latMax.CompareAndSwap(cur, us) {
+			break
+		}
+	}
 	s.latSum.Add(d.Microseconds())
 	s.latN.Add(1)
+	s.sampleLat(float32(ms))
 	for i, b := range latBuckets {
 		if ms <= b {
 			s.hist[i].Add(1)

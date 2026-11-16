@@ -97,7 +97,7 @@ func (m *Manager) allocID() string {
 func (m *Manager) spawn(id string, cfg Config) *Terminal {
 	t := NewTerminal(cfg)
 	t.ID, t.mgr = id, m
-	t.hub.prefix = "#" + id
+	t.hub.prefix, t.hub.owner = "#"+id, t
 	go t.motionLoop()
 	go t.saveLoop()
 	return t
@@ -268,7 +268,7 @@ func (m *Manager) Add(base *Terminal, clone bool) (*Terminal, error) {
 		t = NewTerminal(cfg)
 	}
 	t.ID, t.mgr = id, m
-	t.hub.prefix = "#" + id
+	t.hub.prefix, t.hub.owner = "#"+id, t
 	t.mu.Lock()
 	t.markDirty()
 	t.save()
@@ -312,6 +312,7 @@ func (m *Manager) Delete(id string, purge bool) error {
 		m.def = m.terms[0].ID
 	}
 	m.mu.Unlock()
+	scenarios.Stop(id) // 正在运行的场景先停止
 	t.Stop("删除终端")
 	close(t.quit)
 	t.stopStreams()
@@ -373,6 +374,7 @@ func (m *Manager) SaveAll() {
 		t.mu.Unlock()
 	}
 	m.save()
+	logDisk.Flush()
 }
 
 func (m *Manager) saveLoop() {

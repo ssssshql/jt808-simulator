@@ -7,6 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/wailsapp/wails/v2 v2.17.1
 	golang.org/x/text v0.42.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

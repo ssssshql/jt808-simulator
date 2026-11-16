@@ -90,3 +90,44 @@ let stTick = 0;
 setInterval(() => { if (page === 'stress' || (STRESS && STRESS.running) || ++stTick % 5 === 0) pollStress(); }, 1000);
 onPage('stress', pollStress);
 pollStress();
+
+// ---------------- 压测报告（/api/stress/report） ----------------
+let repId = 'current';
+function openReport(id) {
+  repId = id;
+  $('#repTitle').textContent = id === 'current' ? '压测报告（当前）' : '压测报告 ' + id;
+  $('#repFrame').src = `api/stress/report?id=${encodeURIComponent(id)}&view=1&_=${Date.now()}`;
+  $('#repModal').hidden = false;
+}
+async function exportReport(id, fmt) {
+  const url = `api/stress/report?id=${encodeURIComponent(id)}&format=${fmt}`;
+  try {   // 先确认有报告（没有时后端返回 404 JSON）
+    const r = await fetch(url, { method: 'HEAD' });
+    if (!r.ok) { const j = await (await fetch(url)).json().catch(() => ({})); toast(j.error || '没有可导出的报告'); return; }
+  } catch (e) { toast('请求失败：' + e.message); return; }
+  downloadURL(url);
+}
+$('#page-stress').addEventListener('click', e => {
+  const b = e.target.closest('[data-rep]'); if (!b) return;
+  const id = b.dataset.id || 'current';
+  if (b.dataset.rep === 'view') openReport(id); else exportReport(id, b.dataset.rep);
+});
+$('#repClose').onclick = () => { $('#repModal').hidden = true; $('#repFrame').src = 'about:blank'; };
+$('#repHtml').onclick = () => exportReport(repId, 'html');
+async function loadReports() {
+  try {
+    const j = await (await fetch('api/stress/reports', { cache: 'no-store' })).json();
+    const list = j.reports || [];
+    $('#stReports').innerHTML = list.length ? list.map(r => `<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.target)}</td><td class="r">${stNum(r.count)}</td>
+      <td class="r">${stNum(r.peakOnline)}</td><td class="r mono">${dur(r.durationS * 1000)}</td><td class="r ${r.failRate > 0 ? 'err-text' : ''}">${r.failRate}%</td>
+      <td class="r"><button class="lnk" data-rep="view" data-id="${esc(r.id)}">查看</button> · <button class="lnk" data-rep="html" data-id="${esc(r.id)}">HTML</button> · <button class="lnk" data-rep="json" data-id="${esc(r.id)}">JSON</button> · <button class="lnk" data-rep="csv" data-id="${esc(r.id)}">CSV</button></td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty">压测停止后在这里生成报告</td></tr>';
+  } catch (_) { }
+}
+let stWasRunning = false;
+onPage('stress', loadReports);
+setInterval(() => {   // 压测刚结束时刷新报告列表
+  const on = !!(STRESS && STRESS.running);
+  if (stWasRunning && !on) setTimeout(loadReports, 800);
+  stWasRunning = on;
+}, 1000);

@@ -28,7 +28,8 @@ type logHub struct {
 	seq    int64
 	ring   []LogEntry
 	subs   map[chan LogEntry]bool
-	prefix string // 控制台输出前缀（多终端时区分终端，如 "#2 13800000002"）
+	prefix string    // 控制台输出前缀（多终端时区分终端，如 "#2 13800000002"）
+	owner  *Terminal // 所属终端（系统日志为 nil），落盘时记录终端编号与手机号
 }
 
 func newHub() *logHub { return &logHub{subs: map[chan LogEntry]bool{}} }
@@ -46,7 +47,7 @@ func (h *logHub) add(e LogEntry) {
 	if e.T == 0 {
 		e.T = time.Now().UnixMilli()
 	}
-	pre := h.prefix
+	pre, owner := h.prefix, h.owner
 	h.ring = append(h.ring, e)
 	if len(h.ring) > logKeep {
 		h.ring = h.ring[len(h.ring)-logKeep:]
@@ -58,6 +59,11 @@ func (h *logHub) add(e LogEntry) {
 		}
 	}
 	h.mu.Unlock()
+	rec := diskRec{LogEntry: e}
+	if owner != nil {
+		rec.Term, rec.Phone = owner.ID, owner.phoneNow()
+	}
+	logDisk.write(rec)
 	if !(Quiet && (e.MsgID == "0002" || e.MsgID == "8001" && e.Summary == "0002 成功")) {
 		if pre != "" {
 			fmt.Println("[" + pre + "] " + e.line())
@@ -73,6 +79,13 @@ func (h *logHub) sub() (chan LogEntry, []LogEntry) {
 	ch := make(chan LogEntry, 256)
 	h.subs[ch] = true
 	return ch, append([]LogEntry(nil), h.ring...)
+}
+
+// snapshot 当前序号与内存环副本
+func (h *logHub) snapshot() (int64, []LogEntry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.seq, append([]LogEntry(nil), h.ring...)
 }
 
 func (h *logHub) unsub(ch chan LogEntry) {

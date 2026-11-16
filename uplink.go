@@ -5,7 +5,9 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/hex"
 	"fmt"
+	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -121,12 +123,27 @@ func (t *Terminal) sendUplink(id int, p map[string]any) error {
 		t.mu.Unlock()
 		return t.uploadMedia(it)
 	case 0x0900:
-		content := []byte(pstr(p, "content", "HELLO"))
+		typ := pint(p, "type", 0xF0)
+		if typ < 0 || typ > 0xFF {
+			return fmt.Errorf("透传类型 0~255")
+		}
+		var content []byte
+		if hx := strings.ReplaceAll(pstr(p, "hex", ""), " ", ""); hx != "" {
+			b, err := hex.DecodeString(hx)
+			if err != nil {
+				return fmt.Errorf("透传 hex 无效")
+			}
+			content = b
+		} else if c, ok := p["content"]; ok && fmt.Sprint(c) != "" {
+			content = []byte(pstr(p, "content", ""))
+		} else {
+			content = t.passContent(typ)
+		}
 		if n := pint(p, "size", 0); n > 0 {
 			content = bytes.Repeat([]byte{0x5A}, n)
 		}
-		body = cat([]byte{byte(pint(p, "type", 0xF0))}, content)
-		summary = fmt.Sprintf("类型 0x%02X %d 字节", pint(p, "type", 0xF0), len(content))
+		body = cat([]byte{byte(typ)}, content)
+		summary = fmt.Sprintf("%s %d 字节", passTypeName(typ), len(content))
 	case 0x0901:
 		var gz bytes.Buffer
 		w := gzip.NewWriter(&gz)
@@ -171,4 +188,64 @@ func (t *Terminal) alarmPhotos(prev, cur uint32) {
 			go t.capture(1, evt, store, 1)
 		}
 	}
+}
+
+// passTypeName JT/T 808-2019 表 93 透传消息类型
+func passTypeName(typ int) string {
+	switch {
+	case typ == 0x00:
+		return "GNSS 模块详细定位数据"
+	case typ == 0x0B:
+		return "道路运输证 IC 卡信息"
+	case typ == 0x41:
+		return "串口 1 透传"
+	case typ == 0x42:
+		return "串口 2 透传"
+	case typ >= 0xF0:
+		return fmt.Sprintf("用户自定义 0x%02X", typ)
+	}
+	return fmt.Sprintf("类型 0x%02X", typ)
+}
+
+// passContent 未指定内容时按类型生成：0x00 当前位置的 NMEA（GGA + RMC）；0x0B 64 字节 IC 卡信息（驾驶员从业资格证号 + 姓名 + 发证机构）
+func (t *Terminal) passContent(typ int) []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch typ {
+	case 0x00:
+		return []byte(nmea(time.Now().UTC(), t.Lat, t.Lng, t.speed, t.dir, float64(t.alt), t.sats))
+	case 0x0B:
+		d := t.Driver
+		return cat(fixed(d.LicenseNo, 20), fixed(d.Name, 20), fixed(d.Org, 24))
+	}
+	return []byte("HELLO")
+}
+
+// nmea 生成 $GPGGA 与 $GPRMC 语句（CRLF 分隔）
+func nmea(at time.Time, lat, lng, speedKmh, dir, alt float64, sats int) string {
+	dm := func(v float64, degW int) (string, float64) {
+		a := math.Abs(v)
+		d := math.Floor(a)
+		return fmt.Sprintf("%0*d%07.4f", degW, int(d), (a-d)*60), a
+	}
+	la, _ := dm(lat, 2)
+	lo, _ := dm(lng, 3)
+	ns, ew := "N", "E"
+	if lat < 0 {
+		ns = "S"
+	}
+	if lng < 0 {
+		ew = "W"
+	}
+	sum := func(s string) string {
+		var c byte
+		for i := 0; i < len(s); i++ {
+			c ^= s[i]
+		}
+		return fmt.Sprintf("$%s*%02X\r\n", s, c)
+	}
+	hms := at.Format("150405.00")
+	gga := fmt.Sprintf("GPGGA,%s,%s,%s,%s,%s,1,%02d,0.9,%.1f,M,0.0,M,,", hms, la, ns, lo, ew, sats, alt)
+	rmc := fmt.Sprintf("GPRMC,%s,A,%s,%s,%s,%s,%.1f,%.1f,%s,,,A", hms, la, ns, lo, ew, speedKmh/1.852, dir, at.Format("020106"))
+	return sum(gga) + sum(rmc)
 }

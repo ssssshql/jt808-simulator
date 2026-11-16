@@ -71,6 +71,24 @@ func (t *Terminal) Do(typ string, p map[string]any) error {
 		if v, err := strconv.ParseFloat(pstr(p, "fuel", ""), 64); err == nil && v >= 0 {
 			t.Fuel = v
 		}
+		if v, ok := p["tires"]; ok { // "250,250,240" 或 [250, 250]；空 = 不附带 0x05
+			list, err := parseTires(v)
+			if err != nil {
+				t.mu.Unlock()
+				return err
+			}
+			t.Tires = list
+		}
+		if v, ok := p["cabinTemp"]; ok { // 空 = 不附带 0x06
+			if s := strings.TrimSpace(fmt.Sprint(v)); s == "" || v == nil {
+				t.CabinTemp = nil
+			} else if n, err := strconv.Atoi(strings.TrimSuffix(s, ".0")); err == nil && n >= -32767 && n <= 32767 {
+				t.CabinTemp = &n
+			} else {
+				t.mu.Unlock()
+				return fmt.Errorf("车厢温度需要 -32767~32767 的整数")
+			}
+		}
 		t.markDirty()
 		t.mu.Unlock()
 	case "report":
@@ -507,4 +525,32 @@ func oneOf(v string, opts ...string) bool {
 		}
 	}
 	return false
+}
+
+// parseTires 胎压列表：逗号分隔字符串或数组，每个 0~254，最多 30 个
+func parseTires(v any) ([]int, error) {
+	var parts []string
+	switch x := v.(type) {
+	case nil:
+	case string:
+		parts = strings.FieldsFunc(x, func(r rune) bool { return r == ',' || r == ' ' || r == '，' })
+	case []any:
+		for _, e := range x {
+			parts = append(parts, fmt.Sprint(e))
+		}
+	default:
+		return nil, fmt.Errorf("胎压格式无效")
+	}
+	if len(parts) > 30 {
+		return nil, fmt.Errorf("胎压最多 30 个轮子")
+	}
+	var out []int
+	for _, s := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		if err != nil || n < 0 || n > 254 {
+			return nil, fmt.Errorf("胎压 %q 无效（0~254，0xFF 表示无此轮）", s)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }

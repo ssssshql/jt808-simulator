@@ -44,6 +44,34 @@ function confirmBox(text) {
   });
 }
 
+// ---------------- 下载 / 另存为 ----------------
+// 浏览器：a[download]；桌面版（WebView2）：交给后端弹出系统“另存为”对话框写文件
+const DESKTOP = !!(window.chrome && window.chrome.webview);
+function saveDone(j) {
+  if (j.ok) toast('已保存到 ' + j.path, 'ok');
+  else if (!j.cancelled) toast(j.error || '保存失败');
+}
+// downloadURL 后端生成的文件（url 已带查询参数时用 &save=1）
+async function downloadURL(url) {
+  if (DESKTOP) {
+    try { saveDone(await (await fetch(url + (url.includes('?') ? '&' : '?') + 'save=1')).json()); } catch (e) { toast('保存失败：' + e.message); }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+}
+// saveText 页面生成的内容
+async function saveText(name, text, mime = 'text/plain;charset=utf-8') {
+  if (DESKTOP) {
+    try { saveDone(await (await fetch('api/savefile?name=' + encodeURIComponent(name), { method: 'POST', body: text })).json()); } catch (e) { toast('保存失败：' + e.message); }
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 // ---------------- 后端 ----------------
 async function act(type, params = {}, btn, okMsg) {
   if (btn) btn.disabled = true;
