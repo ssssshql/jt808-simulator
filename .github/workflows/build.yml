@@ -21,7 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet .
-      - run: go test ./...
+      - name: vet 桌面版（desktop tag 仅在 Windows 下编译）
+        run: GOOS=windows go vet -tags desktop .
+      - run: go test -race ./...
 
   windows:
     needs: test
@@ -58,13 +60,19 @@ jobs:
             --product-version "${{ steps.v.outputs.num }}.0" --file-version "${{ steps.v.outputs.num }}.0" \
             --original-filename jt808sim.exe
       - name: 构建 jt808sim.exe
+        env:
+          # 仓库 Settings → Variables 里配置 MINISIGN_PUB（minisign .pub 文件中那行 base64）后，
+          # 公钥编译进二进制，程序内更新将强制校验 .minisig 签名；不配置则只校验 SHA256
+          MINISIGN_PUB: ${{ vars.MINISIGN_PUB }}
         run: |
           mkdir -p dist
+          PUBFLAG=""
+          if [ -n "$MINISIGN_PUB" ]; then PUBFLAG="-X main.updatePubKey=$MINISIGN_PUB"; fi
           go build -tags desktop,production -trimpath \
-            -ldflags "-s -w -H windowsgui -X main.version=${{ steps.v.outputs.version }} -X main.commit=$(git rev-parse --short=8 HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -ldflags "-s -w -H windowsgui -X main.version=${{ steps.v.outputs.version }} -X main.commit=$(git rev-parse --short=8 HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) $PUBFLAG" \
             -o dist/jt808sim.exe .
           go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ steps.v.outputs.version }} -X main.commit=$(git rev-parse --short=8 HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -ldflags "-s -w -X main.version=${{ steps.v.outputs.version }} -X main.commit=$(git rev-parse --short=8 HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) $PUBFLAG" \
             -o dist/jt808sim-cli.exe .
       - name: 安装包与 zip
         run: |
@@ -73,12 +81,29 @@ jobs:
           makensis -V2 -DVERSION="${V#v}" -DSRC="$PWD/dist/jt808sim.exe" -DOUT="$PWD/dist/jt808sim-${V}-windows-x64-setup.exe" build/installer.nsi
           (cd dist && zip -q "jt808sim-${V}-windows-x64-portable.zip" jt808sim.exe jt808sim-cli.exe)
           (cd dist && sha256sum *setup.exe *.zip > SHA256SUMS && cat SHA256SUMS)
+      - name: minisign 签名（配置了 MINISIGN_KEY secret 时）
+        env:
+          # 仓库 Settings → Secrets 里配置 MINISIGN_KEY（无密码的 minisign 私钥全文，
+          # 生成：minisign -G -W），用 -l legacy 模式签名（验签端只需标准库 ed25519）
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          if [ -z "$MINISIGN_KEY" ]; then echo "未配置 MINISIGN_KEY，跳过签名"; exit 0; fi
+          command -v minisign >/dev/null || sudo apt-get install -y -qq minisign
+          printf '%s\n' "$MINISIGN_KEY" > /tmp/minisign.key
+          cd dist
+          for f in *setup.exe *.zip; do
+            minisign -S -l -s /tmp/minisign.key -x "$f.minisig" \
+              -c "jt808sim ${{ steps.v.outputs.version }}" -t "jt808sim release" -m "$f"
+          done
+          rm -f /tmp/minisign.key
+          ls -l *.minisig
       - uses: actions/upload-artifact@v4
         with:
           name: jt808sim-${{ steps.v.outputs.version }}-windows-x64
           path: |
             dist/*setup.exe
             dist/*.zip
+            dist/*.minisig
             dist/SHA256SUMS
       - name: 发布 Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -89,4 +114,5 @@ jobs:
           files: |
             dist/*setup.exe
             dist/*.zip
+            dist/*.minisig
             dist/SHA256SUMS

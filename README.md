@@ -31,7 +31,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags desktop,production -ldfla
 
 ### 记住窗口
 
-退出时把窗口位置、大小和是否最大化写到状态目录下的 `window.json`（`%APPDATA%\jt808sim\state\window.json`），下次启动恢复，最大化的窗口仍在原显示器上最大化。
+退出时把窗口位置、大小和是否最大化写到状态目录下的 `window.json`（`%APPDATA%\jt808sim\state\window.json`），下次启动恢复，最大化的窗口仍在原显示器上最大化。运行中每 15 秒也会自动保存一次（有变化才写），进程被强杀同样不丢。
 恢复前检查标题栏是否落在某个显示器的工作区内：拔掉副屏、改了分辨率或缩放后位置不可见时，自动居中到主显示器；窗口比当前屏幕大时缩小到工作区。
 删除 `window.json` 即恢复默认（1440×900 居中）。
 
@@ -42,6 +42,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags desktop,production -ldfla
 - 安装版：点「立即更新」，程序下载安装包、按 `SHA256SUMS` 校验后启动安装程序并自动退出，装完即是新版本；终端状态保留。
 - 便携版：点「去下载」打开发布页，手动替换 exe。
 - 「跳过此版本」后不再自动提醒该版本，手动检查仍会显示。
+
+可选：构建时注入了 minisign 公钥（CI 变量 `MINISIGN_PUB`，见「CI/CD」）的安装包还会强制校验 Release 里的 `.minisig` 签名，验签失败拒绝安装——`SHA256SUMS` 与安装包同源，签名才是独立的信任链。
 
 ## 终端行为
 
@@ -415,8 +417,9 @@ go test ./...    # 假平台全流程：注册/鉴权/参数/控制/文本提问
 
 `.github/workflows/build.yml`：
 
-- 推送 `main` / PR：`go vet` + `go test`，然后在 Ubuntu 上交叉编译 Windows 桌面版，产物在 Actions 页下载。
+- 推送 `main` / PR：`go vet`（含 `GOOS=windows go vet -tags desktop`，覆盖桌面版代码）+ `go test -race`，然后在 Ubuntu 上交叉编译 Windows 桌面版，产物在 Actions 页下载。
 - 推送 `v*` tag（如 `git tag v1.0.0 && git push origin v1.0.0`）：额外生成安装包、免安装 zip 和 `SHA256SUMS`，自动创建 GitHub Release。
+- 可选的更新签名：仓库 Settings → Secrets 加 `MINISIGN_KEY`（无密码私钥全文，`minisign -G -W` 生成），Settings → Variables 加 `MINISIGN_PUB`（`.pub` 文件里那行 base64）。配置后 CI 自动用 `minisign -l` 给产物签名并随 Release 发布 `.minisig`，公钥编译进二进制、程序内更新强制验签；不配置则行为不变（仅 SHA256）。
 
 ## 联调 gdGpsWeb 推送
 

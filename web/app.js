@@ -195,6 +195,7 @@ function checkBuild(r) {
 }
 
 async function poll() {
+  if (document.hidden) return; // 窗口最小化/标签页隐藏时暂停轮询，可见时由 visibilitychange 立即补一次
   try {
     const want = TID, r = await fetch(api('state'), { cache: 'no-store' });
     checkBuild(r);
@@ -212,6 +213,7 @@ setInterval(poll, 1000);
 // ---------------- 终端切换栏 ----------------
 let TERMS = [];
 async function loadTerms() {
+  if (document.hidden) return;
   try {
     const j = await (await fetch('api/terminals', { cache: 'no-store' })).json();
     TERMS = j.terminals || [];
@@ -257,6 +259,7 @@ $('#tDel').onclick = async e => {
   if (await termOp('delete', { purge: 1 }, e.currentTarget)) { toast(`终端 #${t.id} 已删除`, 'ok'); setTerm(TERMS[0]?.id, true); }
 };
 setInterval(loadTerms, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { poll(); loadTerms(); } });
 
 // 程序版本（/api/version，构建时由 -ldflags 注入）
 async function loadVersion() {

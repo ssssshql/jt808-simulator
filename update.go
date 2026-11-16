@@ -7,7 +7,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,6 +28,12 @@ import (
 
 const updateRepo = "ssssshql/jt808-simulator"
 
+// updatePubKey 构建时经 -ldflags "-X main.updatePubKey=<base64>" 注入 minisign 公钥内容
+// （.pub 文件里那行 base64，42 字节 = 算法"Ed"2 + keynum 8 + 公钥 32）。
+// 注入后安装包必须随 Release 附带 .minisig 签名（minisign -l legacy 模式），验签失败拒绝安装；
+// 未注入时只校验 SHA256（行为与之前一致）。
+var updatePubKey = ""
+
 var (
 	updateAPI  = "https://api.github.com/repos/" + updateRepo + "/releases/latest"
 	updatePage = "https://github.com/" + updateRepo + "/releases/latest"
@@ -42,6 +50,7 @@ type UpdateInfo struct {
 	SetupName  string `json:"setupName"`
 	SetupSize  int64  `json:"setupSize"`
 	SumsURL    string `json:"-"`
+	SigURL     string `json:"-"`
 	CanInstall bool   `json:"canInstall"`
 	Checked    string `json:"checked"`
 }
@@ -140,6 +149,8 @@ func fetchLatest(ctx context.Context) (*UpdateInfo, error) {
 			switch {
 			case strings.HasSuffix(a.Name, "-windows-x64-setup.exe"):
 				info.SetupURL, info.SetupName, info.SetupSize = a.URL, a.Name, a.Size
+			case strings.HasSuffix(a.Name, "-windows-x64-setup.exe.minisig"):
+				info.SigURL = a.URL
 			case a.Name == "SHA256SUMS":
 				info.SumsURL = a.URL
 			}
@@ -160,6 +171,7 @@ func fetchLatest(ctx context.Context) (*UpdateInfo, error) {
 		info.Latest, info.URL = tag, "https://github.com/"+updateRepo+"/releases/tag/"+tag
 		info.SetupName = "jt808sim-" + tag + "-windows-x64-setup.exe"
 		info.SetupURL, info.SumsURL = base+info.SetupName, base+"SHA256SUMS"
+		info.SigURL = base + info.SetupName + ".minisig"
 	}
 	info.Newer = newerThan(info.Latest, cur)
 	info.CanInstall = info.Newer && info.SetupURL != "" && installedCopy()
@@ -262,6 +274,13 @@ func installUpdate(info *UpdateInfo, quit func()) {
 		fail(errors.New("安装包校验失败（SHA256 不一致），已删除"))
 		return
 	}
+	if updatePubKey != "" { // 编译进公钥时强制验签：SHA256SUMS 与安装包同源，签名才构成独立信任链
+		if err := verifySetupSig(info.SigURL, path); err != nil {
+			os.Remove(path)
+			fail(fmt.Errorf("安装包签名校验失败: %w，已删除", err))
+			return
+		}
+	}
 
 	setProg(updateProgress{State: "launching"})
 	if err := exec.Command(path).Start(); err != nil {
@@ -293,6 +312,69 @@ func expectedSum(url, name string) (string, error) {
 		}
 	}
 	return "", errors.New("校验文件里没有 " + name)
+}
+
+// verifySetupSig 用嵌入的 minisign 公钥校验安装包的 legacy 签名（minisign -l：Ed25519 直接对文件内容签名）
+func verifySetupSig(sigURL, path string) error {
+	if sigURL == "" {
+		return errors.New("发布中没有签名文件（.minisig）")
+	}
+	pub, err := updatePub()
+	if err != nil {
+		return err
+	}
+	resp, err := updateClient.Get(sigURL)
+	if err != nil {
+		return fmt.Errorf("获取签名失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("获取签名失败: %s", resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("读取签名失败: %w", err)
+	}
+	sig, err := parseMinisig(string(b))
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(pub, data, sig) {
+		return errors.New("签名与安装包不匹配")
+	}
+	return nil
+}
+
+// updatePub 解析嵌入的 minisign 公钥（base64 的 42 字节：算法"Ed"2 + keynum 8 + 公钥 32）
+func updatePub() (ed25519.PublicKey, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(updatePubKey))
+	if err != nil || len(raw) != 42 || string(raw[:2]) != "Ed" {
+		return nil, errors.New("内置公钥无效")
+	}
+	return ed25519.PublicKey(raw[10:]), nil
+}
+
+// parseMinisig 取 .minisig 第一行签名数据（base64 的 74 字节：算法 2 + keynum 8 + 签名 64），只接受 legacy "Ed"
+func parseMinisig(s string) ([]byte, error) {
+	for line := range strings.Lines(s) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "comment:") {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(line)
+		if err != nil || len(raw) != 74 {
+			continue
+		}
+		if string(raw[:2]) != "Ed" {
+			return nil, errors.New("签名不是 legacy（Ed）格式，CI 签名需用 minisign -l")
+		}
+		return raw[10:], nil
+	}
+	return nil, errors.New("签名文件格式无效")
 }
 
 // updateQuit 由桌面版设置为关闭窗口；命令行版直接退出进程

@@ -27,6 +27,7 @@ var (
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
 	procMonitorFromPoint    = user32.NewProc("MonitorFromPoint")
+	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
 )
 
 type rect32 struct{ L, T, R, B int32 }
@@ -107,7 +108,13 @@ func captureWindow(_ context.Context) (WindowState, bool) {
 		if ok, _, _ := procGetWindowPlacement.Call(h, uintptr(unsafe.Pointer(&wp))); ok == 0 {
 			return WindowState{}, false
 		}
-		_, pw, pm := monitors()
+		// NormalPos 是工作区坐标：用窗口实际所在的显示器换算（最大化可能在副屏），失败退回主显示器
+		const monitorDefaultToNearest = 2
+		hm, _, _ := procMonitorFromWindow.Call(h, monitorDefaultToNearest)
+		pw, pm, ok := monitorWork(hm)
+		if !ok {
+			_, pw, pm = monitors()
+		}
 		dx, dy := pw.L-pm.L, pw.T-pm.T
 		n := wp.NormalPos.rect()
 		r = winRect{n.L + dx, n.T + dy, n.R + dx, n.B + dy}

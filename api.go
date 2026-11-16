@@ -3,7 +3,10 @@ package main
 // Web 界面：GET / 静态页，GET /api/state，POST /api/action，GET /api/log (SSE)
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -347,5 +350,48 @@ func withVersion(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-JT808-Version", v)
 		h.ServeHTTP(w, r)
+	})
+}
+
+// newToken 桌面版本地接口的随机令牌（128 位）；rand 不可用时返回空串（调用方退化为不加令牌）
+func newToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// webGuard 桌面版内置服务的防护：token 为空（-web 模式）时原样放行，保持脚本与局域网访问兼容。
+// 启用后：
+//   - Host 必须是回环地址，防 DNS rebinding（恶意域名解析到 127.0.0.1 后带外源 Host 直接访问）；
+//   - 请求须带启动令牌：首次 ?k=<token> 校验通过后写 HttpOnly cookie，之后同源页面（含 SSE）自动携带。
+//
+// 这样本机其它进程和网页（即便猜到随机端口）都无法读写终端状态或触发操作。
+func webGuard(next http.Handler, token string) http.Handler {
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if c, err := r.Cookie("jt808k"); err == nil &&
+			subtle.ConstantTimeCompare([]byte(c.Value), []byte(token)) == 1 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("k")), []byte(token)) == 1 {
+			http.SetCookie(w, &http.Cookie{Name: "jt808k", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
 	})
 }

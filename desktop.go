@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -57,13 +59,19 @@ func runDesktop() {
 		fatalBox("监听本地端口失败: " + err.Error())
 	}
 	url := "http://" + ln.Addr().String() + "/"
+	// 本地接口令牌：页面经 ?k= 带入并种下 cookie，本机其它进程/网页无法访问 API
+	token := newToken()
+	pageURL := url
+	if token != "" {
+		pageURL = url + "?k=" + token
+	}
 	logf("%s  桌面版，内置服务: %s  状态目录: %s", versionString(), url, stateDir)
-	go http.Serve(ln, newWebMux(m))
+	go http.Serve(ln, webGuard(newWebMux(m), token))
 
 	// 启动页只做一次跳转：窗口直接加载本地服务，SSE / 长连接不经过 Wails 资源服务器
 	boot := fmt.Sprintf(`<!doctype html><meta charset="utf-8"><title>JT808 模拟器</title>
 <body style="font-family:sans-serif;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">正在启动…
-<script>location.replace(%q)</script></body>`, url)
+<script>location.replace(%q)</script></body>`, pageURL)
 
 	// 记住窗口：上次的位置 / 大小 / 是否最大化（window.json 在状态目录内）
 	winFile := filepath.Join(stateDir, "window.json")
@@ -82,6 +90,7 @@ func runDesktop() {
 			}
 		})
 	}
+	var appCtx atomic.Value // context.Context，OnStartup 后可用（供第二实例回调唤起窗口）
 
 	err = wails.Run(&options.App{
 		Title:     "JT808 模拟器 " + buildInfo().Version,
@@ -102,8 +111,19 @@ func runDesktop() {
 				w.Write([]byte(boot))
 			}),
 		},
-		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "jt808sim-desktop-5f1c2e"},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "jt808sim-desktop-5f1c2e",
+			// 重复双击图标时唤起已有窗口，而不是让第二实例静默退出
+			OnSecondInstanceLaunch: func(options.SecondInstanceData) {
+				if v := appCtx.Load(); v != nil {
+					c := v.(context.Context)
+					wruntime.WindowUnminimise(c)
+					wruntime.Show(c)
+				}
+			},
+		},
 		OnStartup: func(ctx context.Context) {
+			appCtx.Store(ctx)
 			// 窗口已创建但尚未显示：先放到上次的位置（越界则居中）
 			if saved != nil {
 				if r, centered, ok := applyWindow(ctx, *saved, 1200, 720); ok {
@@ -113,6 +133,22 @@ func runDesktop() {
 			}
 			updateQuit = func() { saveWin(ctx); m.SaveAll(); wruntime.Quit(ctx) }
 			saveFileHook = func(name string, data []byte) (string, error) { return desktopSave(ctx, name, data) }
+			// 定时保存窗口状态：进程被强杀也不丢位置（正常退出以 OnBeforeClose 的最终保存为准）
+			go func() {
+				tick := time.NewTicker(15 * time.Second)
+				defer tick.Stop()
+				var last WindowState
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-tick.C:
+						if ws, ok := captureWindow(ctx); ok && ws != last && saveWindowState(winFile, ws) == nil {
+							last = ws
+						}
+					}
+				}
+			}()
 		},
 		// 正常关闭窗口（页面关闭按钮 'Q' / Alt+F4 / 任务栏关闭）都经过这里：
 		// 窗口销毁前保存位置与大小；否则只有程序内更新退出才会写 window.json，
