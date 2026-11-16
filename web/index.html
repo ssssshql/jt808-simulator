@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JT808 终端模拟器</title>
 <script>document.documentElement.dataset.theme = localStorage.getItem('jt808.theme') || 'light'; if (localStorage.getItem('jt808.sideMini') === '1') document.documentElement.classList.add('side-mini');</script>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231d1d1f'/%3E%3Cpath d='M8 20l5-9 4 6 3-4 4 7' stroke='%23c6f432' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d1d1f'/%3E%3Cpath d='M6 25L12 16l5 6 3.5-5' fill='none' stroke='%23c6f432' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='23' cy='11' r='6' fill='%23d4ff3a' stroke='none'/%3E%3Cpath d='M23 7.6l2.7 6.2-2.7-1.5-2.7 1.5z' fill='%23141517' stroke='none'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="tb" id="titlebar">
-  <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M7 21l5-10 4 7 3-4 5 8" /></svg></span><span class="ttl">JT808 模拟器</span><span class="ver mono" id="verTag" hidden></span></div>
+  <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M6 25L12 16l5 6 3.5-5" fill="none" stroke="#c6f432" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="23" cy="11" r="6" fill="#d4ff3a" stroke="none"/><path d="M23 7.6l2.7 6.2-2.7-1.5-2.7 1.5z" fill="#141517" stroke="none"/></svg></span><span class="ttl">JT808 模拟器</span><span class="ver mono" id="verTag" hidden></span></div>
   <div class="tb-sep"></div>
   <div class="tb-cur" id="tbCur"></div>
   <div id="connPill" class="status st-offline"><span class="dot"></span><span id="connText">离线</span></div>
