@@ -114,6 +114,13 @@ func runDesktop() {
 			updateQuit = func() { saveWin(ctx); m.SaveAll(); wruntime.Quit(ctx) }
 			saveFileHook = func(name string, data []byte) (string, error) { return desktopSave(ctx, name, data) }
 		},
+		// 正常关闭窗口（页面关闭按钮 'Q' / Alt+F4 / 任务栏关闭）都经过这里：
+		// 窗口销毁前保存位置与大小；否则只有程序内更新退出才会写 window.json，
+		// “记住窗口”在日常使用中永远不生效
+		OnBeforeClose: func(ctx context.Context) bool {
+			saveWin(ctx)
+			return false // 不阻止关闭
+		},
 		OnShutdown: func(ctx context.Context) { m.SaveAll() },
 		Windows: &windows.Options{
 			WebviewUserDataPath: filepath.Join(filepath.Dir(stateDir), "webview"),
