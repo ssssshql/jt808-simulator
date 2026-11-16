@@ -282,7 +282,7 @@ func (t *Terminal) gdExtraAttrs() []byte {
 // gdAttachFiles 粤标附件：<文件类型>_<通道号>_<报警类型>_<序号>_<报警编号>.<后缀>
 // 通道号 64 ADAS / 65 DSM / 67 BSD，与通道无关填 0（TPMS、车辆状态数据记录文件）；报警类型 = 外设 ID + 报警类型（十六进制，如 6401）；
 // 序号按 同通道同类型 分别从 0 编号。附件 ≥3 个时：图片… + 视频 mp4 + 车辆状态数据记录文件 bin（文件类型 03 文本）
-func gdAttachFiles(a adasAlarm, total int, no string, rec []byte) []AttFile {
+func (t *Terminal) gdAttachFiles(a adasAlarm, total int, no string, rec []byte) []AttFile {
 	ch := map[int]int{0x64: 64, 0x65: 65, 0x66: 0, 0x67: 67}[a.attr]
 	code := fmt.Sprintf("%02X%02X", a.attr, a.typ)
 	imgType := 0
@@ -298,10 +298,14 @@ func gdAttachFiles(a adasAlarm, total int, no string, rec []byte) []AttFile {
 	}
 	var files []AttFile
 	for i := 0; i < nImg; i++ {
-		files = append(files, AttFile{fmt.Sprintf("%02d_%d_%s_%d_%s.jpg", imgType, ch, code, i, no), imgType, makeJPEG(max(ch, 1), 5, 3, time.Now())})
+		img := t.currentImage()
+		if img == nil {
+			img = makeJPEG(max(ch, 1), 5, 3, time.Now())
+		}
+		files = append(files, AttFile{fmt.Sprintf("%02d_%d_%s_%d_%s.jpg", imgType, ch, code, i, no), imgType, img})
 	}
 	if video {
-		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_0_%s.mp4", ch, code, no), 2, alarmMP4})
+		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_0_%s.mp4", ch, code, no), 2, t.attachmentVideo()})
 	}
 	if bin {
 		files = append(files, AttFile{fmt.Sprintf("03_0_%s_0_%s.bin", code, no), 3, rec})

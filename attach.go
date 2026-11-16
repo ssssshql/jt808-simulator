@@ -98,15 +98,20 @@ func (t *Terminal) raiseADAS(kind string, typ, level, files, flag int) error {
 }
 
 // attachFiles 按 JSATL12 命名：文件类型_通道_报警类型_序号_报警编号.后缀
-func attachFiles(a adasAlarm, total int, no string) []AttFile {
+// 图片优先取媒体源的当前画面（视频/摄像头抓帧或上传的图片），视频优先用上传的源视频
+func (t *Terminal) attachFiles(a adasAlarm, total int, no string) []AttFile {
 	ch := map[int]int{0x64: 64, 0x65: 65, 0x66: 66, 0x67: 67}[a.attr]
 	code := fmt.Sprintf("%02X%02X", a.attr, a.typ)
 	var files []AttFile
 	for i := 0; i < total; i++ {
 		if i == total-1 && total > 1 {
-			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, alarmMP4})
+			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, t.attachmentVideo()})
 		} else {
-			files = append(files, AttFile{fmt.Sprintf("00_%d_%s_%d_%s.jpg", ch, code, i, no), 0, makeJPEG(ch, 2, 3, time.Now())})
+			img := t.currentImage()
+			if img == nil {
+				img = makeJPEG(ch, 2, 3, time.Now())
+			}
+			files = append(files, AttFile{fmt.Sprintf("00_%d_%s_%d_%s.jpg", ch, code, i, no), 0, img})
 		}
 	}
 	return files
@@ -142,9 +147,9 @@ func (t *Terminal) h9208(m *Msg) {
 	if host == "" {
 		host = info.IP
 	}
-	files := attachFiles(a, max(info.FileTotal, 1), no)
+	files := t.attachFiles(a, max(info.FileTotal, 1), no)
 	if yue {
-		files = gdAttachFiles(a, max(info.FileTotal, 1), no, rec)
+		files = t.gdAttachFiles(a, max(info.FileTotal, 1), no, rec)
 	}
 	if err := t.uploadAttachments(host, info, files); err != nil {
 		t.errf("附件上传失败: %v", err)

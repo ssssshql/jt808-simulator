@@ -100,8 +100,9 @@ func (t *Terminal) State() map[string]any {
 		"analog":  map[string]int{"ad0": t.Analog[0], "ad1": t.Analog[1]},
 		"rec":     t.Rec,
 		"rsa":     map[string]any{"platKey": t.PlatRSA.pub() != nil, "upEncrypt": c.UpRSA},
-		"replay":  t.replayView(),
-		"safety":  t.safetyView(),
+		"replay":   t.replayView(),
+		"safety":   t.safetyView(),
+		"mediaSrc": t.mediaView(),
 	}
 }
 
@@ -222,6 +223,7 @@ func newWebMux(m *Manager) http.Handler {
 		writeJSON(w, 200, map[string]any{"ok": true, "replay": v})
 	})
 	handle("GET /log", func(w http.ResponseWriter, r *http.Request, t *Terminal) { serveLog(w, r, t.logHub()) })
+	registerMediaSrcAPI(handle)
 	mux.HandleFunc("GET /api/syslog", func(w http.ResponseWriter, r *http.Request) { serveLog(w, r, hub) })
 
 	// 压力测试（进程级）

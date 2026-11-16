@@ -33,6 +33,7 @@ type Config struct {
 	Transport     string `json:"transport,omitempty"` // tcp（默认）/ udp
 	Reply8500     string `json:"reply8500,omitempty"` // 8500 应答方式：空 = 只回 0500；"ack0500" = 先回 0001 通用应答再回 0500
 	SafetyStd     string `json:"safetyStd,omitempty"` // 主动安全标准：空 = 苏标 JSATL12（默认）；"gd" = 粤标 T/GDRTA 002-2020
+	MediaSrc      string `json:"mediaSrc,omitempty"`  // 附件画面来源：空 = 合成测试图；image / video / camera（见 mediasrc.go）
 }
 
 // transport 传输方式：udp 或 tcp（空/其它值按 tcp）
@@ -218,6 +219,10 @@ type Terminal struct {
 	streams     map[int]*avStream
 	ftpCtl      map[int]chan int
 	adasPending map[string]adasAlarm
+
+	// 媒体源：前端回传的当前画面（视频/摄像头抓帧）
+	frame   []byte
+	frameAt time.Time
 }
 
 var stateDir = "state"
