@@ -155,6 +155,8 @@ type Profile struct {
 	Menus     map[int]string   `json:"menus"`
 	PlatRSA   PlatKey          `json:"platRsa"`
 	Replay    *Replay          `json:"replay,omitempty"`
+	Tires     []int            `json:"tires,omitempty"`
+	CabinTemp *int             `json:"cabinTemp,omitempty"`
 }
 
 const profileFormat = "jt808sim-profile/1"
@@ -166,7 +168,7 @@ func (t *Terminal) exportProfile() Profile {
 	return Profile{Format: profileFormat, Exported: time.Now().Format(time.RFC3339), Cfg: s.Cfg, Params: s.Params,
 		Lng: s.Lng, Lat: s.Lat, Mileage: s.Mileage, Fuel: s.Fuel, StatusOn: s.StatusOn, ExtSignal: s.ExtSignal,
 		IOStatus: s.IOStatus, Analog: s.Analog, Driver: s.Driver, Rec: s.Rec, Areas: s.Areas, Phonebook: s.Phonebook,
-		Events: s.Events, Menus: s.Menus, PlatRSA: s.PlatRSA, Replay: s.Replay}
+		Events: s.Events, Menus: s.Menus, PlatRSA: s.PlatRSA, Replay: s.Replay, Tires: s.Tires, CabinTemp: s.CabinTemp}
 }
 
 // importProfile 导入档案（必须离线）。参数逐项校验，未知参数按原始 hex 保留；缺失的参数用默认值补齐
@@ -208,6 +210,7 @@ func (t *Terminal) importProfile(p Profile) error {
 		s.Lng, s.Lat = p.Lng, p.Lat
 	}
 	s.Mileage, s.Fuel, s.StatusOn = p.Mileage, p.Fuel, p.StatusOn
+	s.Tires, s.CabinTemp = p.Tires, p.CabinTemp
 	s.ExtSignal, s.IOStatus, s.Analog = p.ExtSignal, p.IOStatus, p.Analog
 	if p.Driver.Name != "" {
 		s.Driver = p.Driver

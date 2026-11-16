@@ -39,6 +39,8 @@ function attrValue(id, b, p, n) {
     case 0x2A: return '0x' + hex4(v);
     case 0x2B: return `AD0=${v & 0xFFFF}，AD1=${v >>> 16}`;
     case 0x30: case 0x31: return String(v);
+    case 0x06: return n === 2 ? ((v << 16) >> 16) + ' ℃' : hexS(b, p, n);
+    case 0x05: return b.slice(p, p + n).filter(x => x !== 0xFF).join(', ') || '无';
   }
   return hexS(b, p, n);
 }
@@ -189,3 +191,66 @@ function setLogMax(on) {
 }
 $('#lMax').onclick = () => setLogMax(!$('#logTile').classList.contains('max'));
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#logTile').classList.contains('max') && page === 'overview') setLogMax(false); });
+
+// ---------- 导出（/api/logs/export）与落盘设置（/api/logs/settings） ----------
+const fmtBytes = n => n >= 1 << 20 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(0) + ' KB' : n + ' B';
+const localDT = ms => { const d = new Date(ms - new Date().getTimezoneOffset() * 60000); return d.toISOString().slice(0, 19); };
+async function loadLogSettings() {
+  try {
+    const s = await (await fetch('api/logs/settings', { cache: 'no-store' })).json();
+    $('#exDisk').checked = s.settings.enabled; $('#exMax').value = s.settings.maxMB; $('#exDays').value = s.settings.days;
+    $('#exDiskInfo').textContent = s.files
+      ? `已落盘 ${s.files} 个文件，共 ${fmtBytes(s.totalBytes)}（${s.oldest} ~ ${s.newest}）${s.dropped ? `；队列满丢弃 ${s.dropped} 条` : ''}${s.lastError ? '；错误：' + s.lastError : ''}`
+      : (s.settings.enabled ? '暂无落盘文件' : '落盘已关闭');
+    $('#exSrc').textContent = s.settings.enabled && s.files ? `来源：落盘日志（${s.oldest} 起）` : `来源：内存（每个终端最近 ${s.ringKeep} 条）`;
+  } catch (_) { }
+}
+function openExport(term) {
+  $('#exTerm').innerHTML = `<option value="all">全部终端（含系统日志）</option>` +
+    TERMS.map(t => `<option value="${esc(t.id)}">#${esc(t.id)} ${esc(t.phone)} ${esc(t.plate || '')}</option>`).join('') + '<option value="sys">系统日志</option>';
+  $('#exTerm').value = term ?? TID;
+  if (!$('#exFrom').value) { $('#exFrom').value = localDT(Date.now() - 3600e3); $('#exTo').value = localDT(Date.now()); }
+  $('#exModal').hidden = false;
+  loadLogSettings();
+}
+$('#lExport').onclick = () => openExport();
+$('#exCancel').onclick = () => { $('#exModal').hidden = true; };
+$('#exRange').onchange = () => { const c = $('#exRange').value === 'custom'; $('#exFromF').hidden = $('#exToF').hidden = !c; };
+$('#exSetSave').onclick = async e => {
+  const body = { enabled: $('#exDisk').checked, maxMB: +$('#exMax').value, days: +$('#exDays').value };
+  e.currentTarget.disabled = true;
+  try {
+    const j = await (await fetch('api/logs/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    if (!j.ok) toast(j.error || '保存失败'); else toast('落盘设置已保存', 'ok');
+  } catch (err) { toast('请求失败：' + err.message); }
+  finally { e.currentTarget.disabled = false; loadLogSettings(); }
+};
+$('#exGo').onclick = async () => {
+  const q = new URLSearchParams({ term: $('#exTerm').value, format: $('#exFmt').value });
+  const dirs = $$('#exDirs input:checked').map(i => i.value);
+  if (!dirs.length) { toast('请至少选择一个方向'); return; }
+  if (dirs.length < 4) q.set('dir', dirs.join(','));
+  if ($('#exIds').value.trim()) q.set('msgId', $('#exIds').value.trim());
+  const r = $('#exRange').value, now = Date.now();
+  if (r === 'custom') {
+    if ($('#exFrom').value) q.set('from', $('#exFrom').value);
+    if ($('#exTo').value) q.set('to', $('#exTo').value);
+  } else if (r === 'today') q.set('from', String(new Date().setHours(0, 0, 0, 0)));
+  else if (r !== 'all') q.set('from', String(now - r * 60e3));
+  const url = 'api/logs/export?' + q;
+  // 先校验参数（错误时后端返回 JSON），再下载
+  try {
+    const h = await fetch(url, { method: 'GET', cache: 'no-store' });
+    if (!h.ok) { const j = await h.json().catch(() => ({})); toast(j.error || '导出失败'); return; }
+    const rows = +h.headers.get('X-JT808-Rows');
+    if (!rows) { toast('筛选条件下没有日志', 'info'); return; }
+    if (DESKTOP) { await downloadURL(url); }
+    else {
+      const blob = await h.blob(), name = (h.headers.get('Content-Disposition') || '').match(/filename="?([^"]+)"?/)?.[1] || 'jt808-log.csv';
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast(`已导出 ${rows} 条`, 'ok');
+    }
+    $('#exModal').hidden = true;
+  } catch (err) { toast('导出失败：' + err.message); }
+};

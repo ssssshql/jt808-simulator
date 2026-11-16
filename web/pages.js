@@ -111,7 +111,7 @@ $('#modeSeg').onclick = e => { const m = e.target.dataset.m; if (m) act('setMoti
 $('#spd').oninput = e => $('#spdV').textContent = e.target.value + ' km/h';
 $('#spd').onchange = e => act('setMotion', { speed: +e.target.value });
 $('#setPos').onclick = e => act('setPosition', { lng: $('#pLng').value, lat: $('#pLat').value }, e.target, '位置已设定');
-$('#setVeh').onclick = e => act('setVehicle', { mileage: $('#vMil').value, fuel: $('#vFuel').value }, e.target, '里程/油量已更新');
+$('#setVeh').onclick = e => act('setVehicle', { mileage: $('#vMil').value, fuel: $('#vFuel').value, tires: $('#vTires').value, cabinTemp: $('#vTemp').value }, e.target, '车辆数据已更新');
 $('#cardIn').onclick = e => act('send', { msgId: '0702', params: { status: 1 } }, e.target, '已插卡（0702）');
 $('#cardOut').onclick = e => act('send', { msgId: '0702', params: { status: 2 } }, e.target, '已拔卡（0702）');
 $('#fitMap').onclick = () => maps.mapMotion && S && fitMap(maps.mapMotion, S);
@@ -163,6 +163,7 @@ function renderMotion(s) {
   if (!editing.has('spd')) { $('#spd').value = s.motion.speed; $('#spdV').textContent = s.motion.speed + ' km/h'; }
   setVal('pLng', s.loc.lng.toFixed(6)); setVal('pLat', s.loc.lat.toFixed(6));
   setVal('vMil', s.loc.mileage.toFixed(1)); setVal('vFuel', s.loc.fuel.toFixed(1));
+  setVal('vTires', (s.loc.tires || []).join(',')); setVal('vTemp', s.loc.cabinTemp ?? '');
   $('#mPos').textContent = `${s.loc.lng.toFixed(6)}, ${s.loc.lat.toFixed(6)}`;
   const d = s.driver;
   $('#drvState').className = 'tag ' + (d.onDuty ? 'ok' : '');
@@ -219,7 +220,8 @@ const UP = {
   '0705': ['CAN 总线数据上传', [['count', '条数', 3]]],
   '0800': ['多媒体事件信息', [['type', '多媒体类型', 0, { 0: '图像', 1: '音频', 2: '视频' }], ['format', '编码格式', 0, { 0: 'JPEG', 1: 'TIF', 2: 'MP3', 3: 'WAV', 4: 'WMV' }], ['event', '事件项', 0, { 0: '平台下发指令', 1: '定时动作', 2: '抢劫报警触发', 3: '碰撞侧翻报警触发', 4: '门开拍照', 5: '门关拍照', 6: '车门由开变关，车速超过 20km/h', 7: '定距拍照' }], ['channel', '通道 ID', 1]]],
   '0801': ['多媒体数据上传', [['type', '多媒体类型', 0, { 0: '图像', 1: '音频', 2: '视频' }], ['event', '事件项', 0, { 0: '平台下发指令', 1: '定时动作', 2: '抢劫报警触发', 3: '碰撞侧翻报警触发' }], ['channel', '通道 ID', 1]]],
-  '0900': ['数据上行透传', [['type', '透传消息类型', 240], ['content', '透传内容', 'HELLO'], ['size', '按大小填充（字节，0=使用内容）', 0]]],
+  '0900': ['数据上行透传', [['type', '透传消息类型', 240, { 0: '0x00 GNSS 模块详细定位数据（NMEA）', 11: '0x0B 道路运输证 IC 卡信息', 65: '0x41 串口 1 透传', 66: '0x42 串口 2 透传', 240: '0xF0 用户自定义' }],
+    ['content', '透传内容（文本；空 = 按类型自动生成）', 'HELLO'], ['hex', '透传内容 hex（优先于文本）', ''], ['size', '按大小填充（字节，0=使用内容）', 0]]],
   '0901': ['数据压缩上报', [['size', '原文重复次数', 20]]],
   '0701': ['电子运单上报', [['content', '电子运单内容', '电子运单：广州 -> 深圳，货物 10 吨']]],
   '1005': ['乘客流量（1078）', [['up', '上车人数', 3], ['down', '下车人数', 1]]],

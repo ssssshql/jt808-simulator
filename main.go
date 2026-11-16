@@ -260,6 +260,7 @@ func main() {
 	flagCfg := Config{Host: *host, Port: *port, Phone: *phone, Version: *ver, Plate: *plate, DeviceID: *deviceID, Token: *token}
 	if *web != "" { // Web 模式：多终端（state/terminals.json），-c 命令作用于默认终端
 		m := NewManager(flagCfg)
+		logDisk.Start() // 报文日志落盘（state/logs，可在页面关闭）
 		go m.saveLoop()
 		go func() { // systemd stop / Ctrl+C：先保存全部终端状态
 			sig := make(chan os.Signal, 1)

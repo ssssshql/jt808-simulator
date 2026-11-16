@@ -143,6 +143,7 @@ func runStress(t *testing.T, s *Stress, c StressConfig, want int) {
 }
 
 func TestStressTCPAndUDP(t *testing.T) {
+	stateDir = t.TempDir() // 停止时会保存压测报告
 	p := newMultiPlat(t)
 	port := p.ln.Addr().(*net.TCPAddr).Port
 	before := runtime.NumGoroutine()

@@ -76,7 +76,7 @@ func (t *Terminal) State() map[string]any {
 			"maker": c.Maker, "iccid": c.ICCID, "fwVer": c.FwVer},
 		"config": c,
 		"loc": map[string]any{"lng": t.Lng, "lat": t.Lat, "alt": t.alt, "speed": t.speed, "dir": int(t.dir),
-			"mileage": t.Mileage, "fuel": t.Fuel, "sats": t.sats, "signal": t.signal},
+			"mileage": t.Mileage, "fuel": t.Fuel, "sats": t.sats, "signal": t.signal, "tires": t.Tires, "cabinTemp": t.CabinTemp},
 		"track":       track,
 		"status":      bits(statusNames, t.statusWord()),
 		"alarms":      bits(alarmNames, t.alarmWord()),
@@ -132,6 +132,11 @@ func newWebMux(m *Manager) http.Handler {
 		writeJSON(w, 200, v)
 	})
 	registerUpdateAPI(mux)
+	registerScenarioAPI(mux, m)
+	registerDownloadAPI(mux)
+	registerLogAPI(mux, m)
+	registerFleetAPI(mux, m)
+	registerStressReportAPI(mux)
 	// 终端级接口：/api/t/{id}/xxx；旧接口 /api/xxx 作用于默认终端（兼容脚本与旧页面）
 	handle := func(pattern string, h termHandler) {
 		method, path, _ := strings.Cut(pattern, " ")

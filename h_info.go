@@ -352,8 +352,11 @@ func (t *Terminal) h8900(m *Msg) {
 	}
 	r := newReader(m.Body)
 	typ := r.u8()
-	t.addInbox("passthrough", fmt.Sprintf("下行透传 类型=0x%02X", typ), fmt.Sprintf("%X", r.rest()), 0, nil)
+	t.addInbox("passthrough", fmt.Sprintf("下行透传 %s", passTypeName(typ)), fmt.Sprintf("%X", r.rest()), 0, nil)
 	t.ack(m, 0)
+	if typ == 0x0B { // 道路运输证 IC 卡认证下传：以 0900 上传 IC 卡信息
+		go t.sendUplink(0x0900, map[string]any{"type": float64(0x0B)})
+	}
 }
 
 // h8A00 平台 RSA 公钥：保存（上行加密用）后回复终端公钥 0A00（e(4) + n(128)）

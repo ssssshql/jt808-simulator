@@ -3,6 +3,7 @@ package main
 // 状态位 / 报警位 / 视频报警位 与 0200 位置信息体
 
 import (
+	"bytes"
 	"math"
 	"time"
 )
@@ -113,6 +114,20 @@ func (t *Terminal) locBody(extra []byte) []byte {
 	attr(0x03, u16(int(t.speed*10)))
 	if t.pendEvt > 0 {
 		attr(0x04, u16(t.pendEvt))
+	}
+	if t.Cfg.ver() >= V2019 { // 2019 新增：0x05 胎压（BYTE[30]，按车头起从左到右，未用 0xFF）、0x06 车厢温度（有符号 WORD，℃）
+		if len(t.Tires) > 0 {
+			tp := bytes.Repeat([]byte{0xFF}, 30)
+			for i, v := range t.Tires {
+				if i < 30 {
+					tp[i] = byte(v)
+				}
+			}
+			attr(0x05, tp)
+		}
+		if t.CabinTemp != nil {
+			attr(0x06, u16(int(uint16(int16(*t.CabinTemp)))))
+		}
 	}
 	if alarm&(1<<1) != 0 {
 		attr(0x11, []byte{0}) // 超速：无特定位置

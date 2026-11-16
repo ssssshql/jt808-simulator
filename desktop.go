@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -48,6 +49,7 @@ func runDesktop() {
 	os.MkdirAll(stateDir, 0o755)
 
 	m := NewManager(Config{})
+	logDisk.Start() // 报文日志落盘（state/logs，可在页面关闭）
 	go m.saveLoop()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -63,12 +65,32 @@ func runDesktop() {
 <body style="font-family:sans-serif;color:#888;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">正在启动…
 <script>location.replace(%q)</script></body>`, url)
 
+	// 记住窗口：上次的位置 / 大小 / 是否最大化（window.json 在状态目录内）
+	winFile := filepath.Join(stateDir, "window.json")
+	saved := loadWindowState(winFile)
+	startState := options.Normal
+	if saved != nil && saved.Maximised {
+		startState = options.Maximised
+	}
+	var winOnce sync.Once
+	saveWin := func(ctx context.Context) {
+		winOnce.Do(func() {
+			if ws, ok := captureWindow(ctx); ok {
+				if err := saveWindowState(winFile, ws); err != nil {
+					errf("保存窗口状态失败: %v", err)
+				}
+			}
+		})
+	}
+
 	err = wails.Run(&options.App{
 		Title:     "JT808 模拟器 " + buildInfo().Version,
 		Width:     1440,
 		Height:    900,
 		MinWidth:  1200,
 		MinHeight: 720,
+		// 最大化在首次显示时由 Wails 处理（显示在还原矩形所在的显示器上）
+		WindowStartState: startState,
 		// 无边框：标题栏、窗口按钮、拖动与缩放由页面自绘（web/desktop.js 通过 WebView2 postMessage 交给 Wails）
 		Frameless:        true,
 		BackgroundColour: &options.RGBA{R: 241, G: 240, B: 236, A: 255},
@@ -81,14 +103,55 @@ func runDesktop() {
 			}),
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "jt808sim-desktop-5f1c2e"},
-		OnStartup:          func(ctx context.Context) { updateQuit = func() { m.SaveAll(); wruntime.Quit(ctx) } },
-		OnShutdown:         func(ctx context.Context) { m.SaveAll() },
+		OnStartup: func(ctx context.Context) {
+			// 窗口已创建但尚未显示：先放到上次的位置（越界则居中）
+			if saved != nil {
+				if r, centered, ok := applyWindow(ctx, *saved, 1200, 720); ok {
+					logf("恢复窗口 %d,%d %dx%d%s%s", r.L, r.T, r.w(), r.h(), map[bool]string{true: "（上次位置不可见，已居中）"}[centered],
+						map[bool]string{true: " 最大化"}[saved.Maximised])
+				}
+			}
+			updateQuit = func() { saveWin(ctx); m.SaveAll(); wruntime.Quit(ctx) }
+			saveFileHook = func(name string, data []byte) (string, error) { return desktopSave(ctx, name, data) }
+		},
+		OnShutdown: func(ctx context.Context) { m.SaveAll() },
 		Windows: &windows.Options{
 			WebviewUserDataPath: filepath.Join(filepath.Dir(stateDir), "webview"),
+			WindowClassName:     winClassName,
 		},
 	})
 	m.SaveAll()
 	if err != nil {
 		fatalBox("窗口启动失败: " + err.Error())
 	}
+}
+
+// desktopSave 系统“另存为”对话框（导出日志 / 报告 / 场景等）
+func desktopSave(ctx context.Context, name string, data []byte) (string, error) {
+	ext := strings.TrimPrefix(filepath.Ext(name), ".")
+	opts := wruntime.SaveDialogOptions{DefaultFilename: name, Title: "保存文件", CanCreateDirectories: true}
+	if ext != "" {
+		opts.Filters = []wruntime.FileFilter{{DisplayName: strings.ToUpper(ext) + " 文件 (*." + ext + ")", Pattern: "*." + ext}, {DisplayName: "所有文件 (*.*)", Pattern: "*.*"}}
+	}
+	if dir, err := os.UserHomeDir(); err == nil {
+		if d := filepath.Join(dir, "Downloads"); dirExists(d) {
+			opts.DefaultDirectory = d
+		}
+	}
+	path, err := wruntime.SaveFileDialog(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", errSaveCancelled
+	}
+	if ext != "" && filepath.Ext(path) == "" {
+		path += "." + ext
+	}
+	return path, os.WriteFile(path, data, 0o644)
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }

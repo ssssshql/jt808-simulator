@@ -127,13 +127,15 @@ type Saved struct {
 	DayDrive  int              `json:"dayDrive"`
 	DayKey    string           `json:"dayKey"`
 	Rec       RecorderState    `json:"rec"`
-	ExtSignal uint32           `json:"extSignal"`        // 0x25 扩展车辆信号状态位
-	IOStatus  uint16           `json:"ioStatus"`         // 0x2A IO状态位
-	Analog    [2]int           `json:"analog"`           // 0x2B 模拟量 AD0 / AD1
-	RSAKey    string           `json:"rsaKey,omitempty"` // 终端 RSA 私钥（PKCS#1 DER hex）
-	PlatRSA   PlatKey          `json:"platRsa"`          // 平台 RSA 公钥（8A00）
-	Replay    *Replay          `json:"replay,omitempty"` // 导入的回放轨迹（GPX/CSV）
-	GD        GDState          `json:"gd"`               // 粤标外设状态 / 异常信息 / 升级模拟
+	ExtSignal uint32           `json:"extSignal"`           // 0x25 扩展车辆信号状态位
+	IOStatus  uint16           `json:"ioStatus"`            // 0x2A IO状态位
+	Analog    [2]int           `json:"analog"`              // 0x2B 模拟量 AD0 / AD1
+	RSAKey    string           `json:"rsaKey,omitempty"`    // 终端 RSA 私钥（PKCS#1 DER hex）
+	PlatRSA   PlatKey          `json:"platRsa"`             // 平台 RSA 公钥（8A00）
+	Replay    *Replay          `json:"replay,omitempty"`    // 导入的回放轨迹（GPX/CSV）
+	GD        GDState          `json:"gd"`                  // 粤标外设状态 / 异常信息 / 升级模拟
+	Tires     []int            `json:"tires,omitempty"`     // 0x05 胎压（2019），最多 30 个轮子，0~254
+	CabinTemp *int             `json:"cabinTemp,omitempty"` // 0x06 车厢温度（2019），℃
 }
 
 type Terminal struct {
