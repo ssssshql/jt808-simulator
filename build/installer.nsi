@@ -2,6 +2,34 @@
 ; makensis -DVERSION=1.2.3 -DSRC=dist/jt808sim.exe -DOUT=dist/jt808sim-1.2.3-setup.exe build/installer.nsi
 Unicode true
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
+
+!define WM_CLOSE 0x0010
+
+; 优雅关闭正在运行的实例：先给主窗口发 WM_CLOSE（触发状态保存），
+; 最多等 6 秒；窗口仍在才回退到强杀（兜底，处理无响应的情况）
+Function CloseAppGracefully
+  FindWindow $0 "jt808simWindow"
+  ${If} $0 <> 0
+    SendMessage $0 ${WM_CLOSE} 0 0
+    StrCpy $1 0
+    ${Do}
+      Sleep 500
+      IntOp $1 $1 + 1
+      FindWindow $0 "jt808simWindow"
+      ${If} $0 == 0
+        ${ExitDo}
+      ${EndIf}
+      ${If} $1 >= 12
+        ${ExitDo}
+      ${EndIf}
+    ${Loop}
+    ${If} $0 <> 0
+      nsExec::Exec 'taskkill /F /IM jt808sim.exe'
+      Sleep 1000
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
 
 !ifndef VERSION
   !define VERSION "0.0.0"
@@ -28,8 +56,8 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
 Section "Install"
-  ; 覆盖安装前结束正在运行的实例
-  nsExec::Exec 'taskkill /F /IM jt808sim.exe'
+  ; 覆盖安装前结束正在运行的实例（优雅关闭，保留终端状态）
+  Call CloseAppGracefully
   SetOutPath "$INSTDIR"
   File "/oname=jt808sim.exe" "${SRC}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -46,7 +74,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-  nsExec::Exec 'taskkill /F /IM jt808sim.exe'
+  Call CloseAppGracefully
   Delete "$INSTDIR\jt808sim.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
