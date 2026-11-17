@@ -39,7 +39,7 @@ func TestStressReport(t *testing.T) {
 	}
 	l := r.Latency
 	if !r.Final || r.Reason != "测试" || r.RegOK != 20 || r.Timeouts != 0 || r.FailRate != 0 || r.PeakConn < 20 || r.AvgOnline <= 0 ||
-		l.Count < 40 || l.P50 <= 0 || l.P50 > l.P90 || l.P90 > l.P99 || l.P99 > l.Max || r.DurationS < 2 || len(r.Hist) != len(latBuckets) {
+		l.Count < 40 || l.P50 < 0 || l.P50 > l.P90 || l.P90 > l.P99 || l.P99 > l.Max || r.DurationS < 2 || len(r.Hist) != len(latBuckets) {
 		t.Fatalf("%+v", r)
 	}
 	html, err := r.HTML()

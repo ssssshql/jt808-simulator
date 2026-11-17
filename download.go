@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"path/filepath"
 	"strings"
 )
 
@@ -19,9 +18,13 @@ var errSaveCancelled = fmt.Errorf("已取消保存")
 
 const maxSaveBytes = 64 << 20
 
-// safeName 去掉路径与非法字符的文件名
+// safeName 去掉路径与非法字符的文件名。按 '/' 切分而不是 filepath.Base：
+// Windows 下 Base 会把 "a:b.csv" 的 ':' 当卷标分隔符截断，导致不同平台结果不一致
 func safeName(name string) string {
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
 	name = strings.Map(func(r rune) rune {
 		if strings.ContainsRune(`<>:"/\|?*`, r) || r < 32 {
 			return '_'

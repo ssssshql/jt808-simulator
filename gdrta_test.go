@@ -229,7 +229,7 @@ func TestGDRecordFileAndNames(t *testing.T) {
 			t.Fatalf("Z 轴加速度 %X", blk[40:42])
 		}
 	}
-	files := gdAttachFiles(adasAlarm{0x64, 0x12, 1}, 4, "ALM1", rec)
+	files := term.gdAttachFiles(adasAlarm{0x64, 0x12, 1}, 4, "ALM1", rec)
 	var names []string
 	for _, f := range files {
 		names = append(names, f.Name)
@@ -237,10 +237,10 @@ func TestGDRecordFileAndNames(t *testing.T) {
 	if strings.Join(names, ",") != "00_64_6412_0_ALM1.jpg,00_64_6412_1_ALM1.jpg,02_64_6412_0_ALM1.mp4,03_0_6412_0_ALM1.bin" || files[3].Type != 3 {
 		t.Fatalf("附件命名 %v", names)
 	}
-	if f := gdAttachFiles(adasAlarm{0x65, 0x11, 1}, 1, "N", nil); f[0].Name != "04_65_6511_0_N.jpg" || f[0].Type != 4 {
+	if f := term.gdAttachFiles(adasAlarm{0x65, 0x11, 1}, 1, "N", nil); f[0].Name != "04_65_6511_0_N.jpg" || f[0].Type != 4 {
 		t.Fatalf("面部特征图片 %v", f[0].Name)
 	}
-	if f := gdAttachFiles(adasAlarm{0x66, 2, 1}, 1, "N", nil); f[0].Name != "00_0_6602_0_N.jpg" {
+	if f := term.gdAttachFiles(adasAlarm{0x66, 2, 1}, 1, "N", nil); f[0].Name != "00_0_6602_0_N.jpg" {
 		t.Fatalf("TPMS 通道应为 0：%v", f[0].Name)
 	}
 	// 1210：终端ID 30 + 报警标识 40 + 报警编号 32 + 信息类型 + 附件数 + 列表

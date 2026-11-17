@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -23,8 +25,13 @@ func TestMediaSource(t *testing.T) {
 	if err := term.setMediaSource("image", ".jpg", jpg); err != nil {
 		t.Fatal(err)
 	}
-	if got := term.currentImage(); !bytes.Equal(got, jpg) {
-		t.Fatal("图片源应作为当前画面")
+	got := term.currentImage() // 上传图片会重编码为 JPEG（质量 90），不能与原始字节比较
+	if len(got) < 4 || got[0] != 0xFF || got[1] != 0xD8 {
+		t.Fatalf("图片源应作为当前画面（JPEG），得到 %d 字节", len(got))
+	}
+	saved, err := os.ReadFile(filepath.Join(mediaDir(), "default.jpg")) // 终端无编号（命令行单终端）时为 default
+	if err != nil || !bytes.Equal(got, saved) {
+		t.Fatalf("当前画面应来自保存的图片文件: %v", err)
 	}
 
 	// 上传视频：附件视频用源文件
