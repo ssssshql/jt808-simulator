@@ -78,7 +78,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq nsis zip
           V="${{ steps.v.outputs.version }}"
-          makensis -V2 -DVERSION="${V#v}" -DSRC="$PWD/dist/jt808sim.exe" -DOUT="$PWD/dist/jt808sim-${V}-windows-x64-setup.exe" build/installer.nsi
+          makensis -V2 -INPUTCHARSET UTF8 -DVERSION="${V#v}" -DSRC="$PWD/dist/jt808sim.exe" -DOUT="$PWD/dist/jt808sim-${V}-windows-x64-setup.exe" build/installer.nsi
           (cd dist && zip -q "jt808sim-${V}-windows-x64-portable.zip" jt808sim.exe jt808sim-cli.exe)
           (cd dist && sha256sum *setup.exe *.zip > SHA256SUMS && cat SHA256SUMS)
       - name: minisign 签名（配置了 MINISIGN_KEY secret 时）

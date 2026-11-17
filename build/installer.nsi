@@ -4,11 +4,18 @@ Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
-!define WM_CLOSE 0x0010
+; 压缩设置必须写在任何 Function / Section 之前（否则报 can't change compressor）
+SetCompressor /SOLID lzma
+
+; WM_CLOSE 已由 MUI2 间接包含的 WinMessages.nsh 定义，重复 !define 会报 already defined
+!ifndef WM_CLOSE
+  !define WM_CLOSE 0x0010
+!endif
 
 ; 优雅关闭正在运行的实例：先给主窗口发 WM_CLOSE（触发状态保存），
-; 最多等 6 秒；窗口仍在才回退到强杀（兜底，处理无响应的情况）
-Function CloseAppGracefully
+; 最多等 6 秒；窗口仍在才回退到强杀（兜底，处理无响应的情况）。
+; 安装段与卸载段各调一次，卸载段函数名必须带 un. 前缀，因此本体写成宏
+!macro CloseAppBody
   FindWindow $0 "jt808simWindow"
   ${If} $0 <> 0
     SendMessage $0 ${WM_CLOSE} 0 0
@@ -29,6 +36,14 @@ Function CloseAppGracefully
       Sleep 1000
     ${EndIf}
   ${EndIf}
+!macroend
+
+Function CloseAppGracefully
+  !insertmacro CloseAppBody
+FunctionEnd
+
+Function un.CloseAppGracefully
+  !insertmacro CloseAppBody
 FunctionEnd
 
 !ifndef VERSION
@@ -43,7 +58,6 @@ OutFile "${OUT}"
 InstallDir "$LOCALAPPDATA\Programs\${APPID}"
 InstallDirRegKey HKCU "Software\${APPID}" "InstallDir"
 RequestExecutionLevel user
-SetCompressor /SOLID lzma
 
 !define MUI_ICON   "icon.ico"
 !define MUI_UNICON "icon.ico"
@@ -74,7 +88,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-  Call CloseAppGracefully
+  Call un.CloseAppGracefully
   Delete "$INSTDIR\jt808sim.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
