@@ -103,11 +103,12 @@ func (t *Terminal) attachFiles(a adasAlarm, total int, no string) []AttFile {
 	ch := map[int]int{0x64: 64, 0x65: 65, 0x66: 66, 0x67: 67}[a.attr]
 	code := fmt.Sprintf("%02X%02X", a.attr, a.typ)
 	var files []AttFile
+	cur := t.currentImage() // 同一次上报的图片共用同一个源的画面，循环外取一次（图片模式避免重复读盘）
 	for i := 0; i < total; i++ {
 		if i == total-1 && total > 1 {
 			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, t.attachmentVideo()})
 		} else {
-			img := t.currentImage()
+			img := cur
 			if img == nil {
 				img = makeJPEG(ch, 2, 3, time.Now())
 			}

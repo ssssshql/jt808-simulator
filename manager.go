@@ -324,8 +324,11 @@ func (m *Manager) Delete(id string, purge bool) error {
 		t.save()
 	}
 	t.mu.Unlock()
-	if purge && f != "" && !m.phoneUsed(t.phoneNow(), nil) {
-		os.Remove(f)
+	if purge {
+		if f != "" && !m.phoneUsed(t.phoneNow(), nil) {
+			os.Remove(f)
+		}
+		removeMediaFiles(id) // 媒体源文件按终端编号命名，不清理会永久残留（每个最大 64MB）
 	}
 	m.save()
 	hub.add(LogEntry{Dir: "sys", Summary: fmt.Sprintf("已删除终端 #%s phone=%s", id, t.phoneNow())})

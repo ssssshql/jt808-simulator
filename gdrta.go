@@ -297,8 +297,9 @@ func (t *Terminal) gdAttachFiles(a adasAlarm, total int, no string, rec []byte) 
 		nImg, bin = total-2, true
 	}
 	var files []AttFile
+	cur := t.currentImage() // 同一次上报的图片共用同一画面，循环外取一次
 	for i := 0; i < nImg; i++ {
-		img := t.currentImage()
+		img := cur
 		if img == nil {
 			img = makeJPEG(max(ch, 1), 5, 3, time.Now())
 		}

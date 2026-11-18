@@ -114,13 +114,16 @@ function renderMs(s) {
   }
   if (src === 'camera' && msStream) msStartCapture();
 
+  const frameText = ms.frameAge >= 0 ? `最近一帧 ${ms.frameAge} 秒前（${(ms.frameSize / 1024).toFixed(0)} KB）` : '';
+  // 抓帧靠浏览器定时器，窗口最小化 / 标签页在后台会被节流；此时附件仍沿用最后一帧，不退回合成图
+  const staleTip = ms.stale ? `前端抓帧已暂停 ${ms.frameAge} 秒（窗口最小化或标签页在后台会被节流），附件仍沿用这一帧。` : '';
   $('#msHint').textContent = src === ''
-    ? '默认：附件图片是合成彩条测试图，视频是内置 alarm.mp4。选择图片/视频文件或摄像头后，上传附件时将截取当前播放画面（视频/摄像头每秒抓帧，抓帧缓存 10 秒内有效）。'
+    ? '默认：附件图片是合成彩条测试图，视频是内置 alarm.mp4。选择图片/视频文件或摄像头后，上传附件时截取当前播放画面（每秒抓帧，附件始终用最新一帧）。'
     : src === 'image'
       ? '图片附件将使用上传的这张图片；视频附件仍用内置 alarm.mp4。'
       : src === 'camera'
-        ? (ms.frameAge >= 0 ? `摄像头循环抓帧中，最近一帧 ${ms.frameAge} 秒前（${(ms.frameSize / 1024).toFixed(0)} KB）。` : '等待摄像头画面…') + '图片附件取当前画面；摄像头无源视频，视频附件仍用内置 alarm.mp4。'
-        : (ms.frameAge >= 0 ? `视频循环播放中，最近抓帧 ${ms.frameAge} 秒前。` : '视频加载中…') + '图片附件截取当前播放画面，视频附件使用上传的源视频。';
+        ? (frameText ? `摄像头循环抓帧中，${frameText}。` : '等待摄像头画面…') + staleTip + '图片附件取当前画面；摄像头无源视频，视频附件仍用内置 alarm.mp4。'
+        : (frameText ? `视频循环播放中，${frameText}。` : '视频加载中…') + staleTip + '图片附件截取当前播放画面，视频附件使用上传的源视频。';
 }
 onState(s => page === 'adas' && renderMs(s));
 onPage('adas', () => S && renderMs(S));

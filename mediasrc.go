@@ -24,7 +24,9 @@ func mediaDir() string { return filepath.Join(stateDir, "media") }
 const (
 	maxMediaBytes = 64 << 20 // 上传媒体文件上限
 	maxFrameBytes = 4 << 20  // 单帧 JPEG 上限
-	frameFresh    = 10 * time.Second
+	// frameStale 仅为提示用：浏览器在窗口最小化/页面不可见时会把抓帧定时器节流，
+	// 超过这个时长没新帧就在页面上提示，但附件仍沿用最后一帧（不回退合成图）
+	frameStale = 30 * time.Second
 )
 
 // setMediaSource 上传并设置媒体源（kind = image / video）。图片统一重编码为 JPEG 保存。
@@ -75,6 +77,7 @@ func (t *Terminal) setMediaSource(kind, ext string, data []byte) error {
 	}
 	t.mu.Lock()
 	t.Cfg.MediaSrc = kind
+	t.frame, t.frameAt = nil, time.Time{} // 换源即作废旧帧，否则新附件仍会用到上一个源（视频/摄像头）的画面
 	t.markDirty()
 	t.mu.Unlock()
 	t.logf("媒体源已设置为%s（%d 字节）", map[string]string{"image": "图片文件", "video": "视频文件"}[kind], len(out))
@@ -83,13 +86,7 @@ func (t *Terminal) setMediaSource(kind, ext string, data []byte) error {
 
 // clearMediaSource 恢复默认合成画面
 func (t *Terminal) clearMediaSource() {
-	id := t.ID
-	if id == "" {
-		id = "default"
-	}
-	for _, e := range []string{".jpg", ".mp4"} {
-		os.Remove(filepath.Join(mediaDir(), id+e))
-	}
+	removeMediaFiles(t.ID)
 	t.mu.Lock()
 	t.Cfg.MediaSrc, t.frame, t.frameAt = "", nil, time.Time{}
 	t.markDirty()
@@ -102,6 +99,7 @@ func (t *Terminal) setCamera(on bool) {
 	t.mu.Lock()
 	if on {
 		t.Cfg.MediaSrc = "camera"
+		t.frame, t.frameAt = nil, time.Time{} // 作废上一个源留下的帧
 	} else if t.Cfg.MediaSrc == "camera" {
 		t.Cfg.MediaSrc = ""
 		t.frame, t.frameAt = nil, time.Time{}
@@ -121,12 +119,13 @@ func (t *Terminal) setFrame(data []byte) error {
 	return nil
 }
 
-// currentImage 当前画面：优先最新抓帧（10 秒内），其次上传的图片文件；都没有返回 nil（调用方回退合成图）
+// currentImage 当前画面：视频/摄像头模式沿用最后一帧（不按时间作废——窗口最小化会让浏览器节流抓帧，
+// 按时间作废会莫名其妙退回合成图），其次上传的图片文件；都没有返回 nil（调用方回退合成图）
 func (t *Terminal) currentImage() []byte {
 	t.mu.Lock()
-	f, at, src, id := t.frame, t.frameAt, t.Cfg.MediaSrc, t.ID
+	f, src, id := t.frame, t.Cfg.MediaSrc, t.ID
 	t.mu.Unlock()
-	if len(f) > 0 && time.Since(at) < frameFresh {
+	if len(f) > 0 && (src == "video" || src == "camera") {
 		return f
 	}
 	if src == "image" {
@@ -162,7 +161,18 @@ func (t *Terminal) mediaView() map[string]any {
 	if !t.frameAt.IsZero() {
 		age = int(time.Since(t.frameAt).Seconds())
 	}
-	return map[string]any{"src": t.Cfg.MediaSrc, "frameAge": age, "frameSize": len(t.frame)}
+	return map[string]any{"src": t.Cfg.MediaSrc, "frameAge": age, "frameSize": len(t.frame),
+		"stale": age > int(frameStale.Seconds())} // stale：前端抓帧可能被浏览器节流，仅用于页面提示
+}
+
+// removeMediaFiles 删除终端对应的媒体文件（删终端时清理，文件按终端编号命名）
+func removeMediaFiles(id string) {
+	if id == "" {
+		id = "default"
+	}
+	for _, e := range []string{".jpg", ".mp4"} {
+		os.Remove(filepath.Join(mediaDir(), id+e))
+	}
 }
 
 // registerMediaSrcAPI 终端级媒体源与抓帧接口
@@ -196,14 +206,22 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 			writeJSON(w, 404, map[string]any{"ok": false, "error": "未上传媒体文件"})
 			return
 		}
-		b, err := os.ReadFile(filepath.Join(mediaDir(), id+ext))
+		path := filepath.Join(mediaDir(), id+ext)
+		f, err := os.Open(path)
 		if err != nil {
 			writeJSON(w, 404, map[string]any{"ok": false, "error": "媒体文件不存在"})
 			return
 		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"ok": false, "error": "读取失败: " + err.Error()})
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", map[string]string{".jpg": "image/jpeg", ".mp4": "video/mp4"}[ext])
-		w.Write(b)
+		// ServeContent 支持 Range：<video> 需要它做 seek，未做 faststart 的 MP4 也要靠它读文件尾的 moov
+		http.ServeContent(w, r, filepath.Base(path), st.ModTime(), f)
 	})
 	handle("DELETE /mediasrc", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		t.clearMediaSource()
