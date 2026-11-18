@@ -265,12 +265,18 @@
         </div>
         <div class="card">
           <div class="card-h"><h2>媒体源（附件画面来源）</h2><span class="tag" id="msTag">默认合成图</span></div>
+          <label class="lbl">通道</label>
+          <div class="seg block" id="msCh"><button data-ch="0">全部通道</button><button data-ch="64">ADAS 64</button><button data-ch="65">DSM 65</button><button data-ch="66">TPMS 66</button><button data-ch="67">BSD 67</button></div>
+          <label class="lbl" style="margin-top:14px">来源（未单独设置的通道继承「全部通道」）</label>
           <div class="seg block" id="msKind"><button data-ms="">默认合成图</button><button data-ms="image">图片文件</button><button data-ms="video">视频文件</button><button data-ms="camera">电脑摄像头</button></div>
+          <div class="field" id="msCamWrap" hidden style="margin-top:12px"><label class="lbl" for="msCam">摄像头设备</label><select id="msCam"></select></div>
           <div class="ms-preview" id="msPreviewWrap" hidden style="margin-top:12px;text-align:center">
             <video id="msVideo" loop muted playsinline hidden style="max-width:100%;max-height:260px;border-radius:8px;background:#000"></video>
             <img id="msImg" hidden style="max-width:100%;max-height:260px;border-radius:8px">
           </div>
           <p class="hint" id="msHint"></p>
+          <div class="btns"><button class="btn sm" id="msPrev">预览附件画面</button><span class="muted" id="msPrevTag"></span></div>
+          <div id="msPrevWrap" hidden style="margin-top:10px;text-align:center"><img id="msPrevImg" style="max-width:100%;max-height:260px;border-radius:8px"></div>
           <input type="file" id="msFile" hidden>
         </div>
         <div class="grid g2" id="gdCards" hidden>

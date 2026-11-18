@@ -297,7 +297,8 @@ func (t *Terminal) gdAttachFiles(a adasAlarm, total int, no string, rec []byte) 
 		nImg, bin = total-2, true
 	}
 	var files []AttFile
-	cur := t.currentImage() // 同一次上报的图片共用同一画面，循环外取一次
+	mch := mediaChOf(a.attr)   // 媒体按报警类型分通道（TPMS 文件名通道号填 0，但媒体源仍按 66 取）
+	cur := t.currentImage(mch) // 同一次上报的图片共用同一画面，循环外取一次
 	for i := 0; i < nImg; i++ {
 		img := cur
 		if img == nil {
@@ -306,7 +307,7 @@ func (t *Terminal) gdAttachFiles(a adasAlarm, total int, no string, rec []byte) 
 		files = append(files, AttFile{fmt.Sprintf("%02d_%d_%s_%d_%s.jpg", imgType, ch, code, i, no), imgType, img})
 	}
 	if video {
-		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_0_%s.mp4", ch, code, no), 2, t.attachmentVideo()})
+		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_0_%s.mp4", ch, code, no), 2, t.attachmentVideo(mch)})
 	}
 	if bin {
 		files = append(files, AttFile{fmt.Sprintf("03_0_%s_0_%s.bin", code, no), 3, rec})

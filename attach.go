@@ -98,15 +98,16 @@ func (t *Terminal) raiseADAS(kind string, typ, level, files, flag int) error {
 }
 
 // attachFiles 按 JSATL12 命名：文件类型_通道_报警类型_序号_报警编号.后缀
-// 图片优先取媒体源的当前画面（视频/摄像头抓帧或上传的图片），视频优先用上传的源视频
+// 图片取该通道媒体源的当前画面（视频/摄像头抓帧或上传的图片），视频优先用该通道上传的源视频
 func (t *Terminal) attachFiles(a adasAlarm, total int, no string) []AttFile {
 	ch := map[int]int{0x64: 64, 0x65: 65, 0x66: 66, 0x67: 67}[a.attr]
 	code := fmt.Sprintf("%02X%02X", a.attr, a.typ)
+	mch := mediaChOf(a.attr)
 	var files []AttFile
-	cur := t.currentImage() // 同一次上报的图片共用同一个源的画面，循环外取一次（图片模式避免重复读盘）
+	cur := t.currentImage(mch) // 同一次上报的图片共用同一个源的画面，循环外取一次（图片模式避免重复读盘）
 	for i := 0; i < total; i++ {
 		if i == total-1 && total > 1 {
-			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, t.attachmentVideo()})
+			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, t.attachmentVideo(mch)})
 		} else {
 			img := cur
 			if img == nil {

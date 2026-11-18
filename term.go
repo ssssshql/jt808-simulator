@@ -11,29 +11,30 @@ import (
 )
 
 type Config struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	Phone         string `json:"phone"`
-	Version       string `json:"version"` // 2013 / 2019
-	Token         string `json:"token"`
-	Plate         string `json:"plate"`
-	PlateColor    int    `json:"plateColor"`
-	VIN           string `json:"vin"`
-	DeviceID      string `json:"deviceId"`
-	Model         string `json:"model"`
-	Maker         string `json:"maker"`
-	ICCID         string `json:"iccid"`
-	IMEI          string `json:"imei"`
-	HwVer         string `json:"hwVer"`
-	FwVer         string `json:"fwVer"`
-	AutoReconnect bool   `json:"autoReconnect"`
-	AttachHost    string `json:"attachHost"` // 覆盖 9208 下发的附件服务器 IP（为空用下发值）
-	AutoAttach    bool   `json:"autoAttach"`
-	UpRSA         bool   `json:"upRsa"`               // 上行RSA加密（需已收到平台 8A00 公钥）
-	Transport     string `json:"transport,omitempty"` // tcp（默认）/ udp
-	Reply8500     string `json:"reply8500,omitempty"` // 8500 应答方式：空 = 只回 0500；"ack0500" = 先回 0001 通用应答再回 0500
-	SafetyStd     string `json:"safetyStd,omitempty"` // 主动安全标准：空 = 苏标 JSATL12（默认）；"gd" = 粤标 T/GDRTA 002-2020
-	MediaSrc      string `json:"mediaSrc,omitempty"`  // 附件画面来源：空 = 合成测试图；image / video / camera（见 mediasrc.go）
+	Host          string            `json:"host"`
+	Port          int               `json:"port"`
+	Phone         string            `json:"phone"`
+	Version       string            `json:"version"` // 2013 / 2019
+	Token         string            `json:"token"`
+	Plate         string            `json:"plate"`
+	PlateColor    int               `json:"plateColor"`
+	VIN           string            `json:"vin"`
+	DeviceID      string            `json:"deviceId"`
+	Model         string            `json:"model"`
+	Maker         string            `json:"maker"`
+	ICCID         string            `json:"iccid"`
+	IMEI          string            `json:"imei"`
+	HwVer         string            `json:"hwVer"`
+	FwVer         string            `json:"fwVer"`
+	AutoReconnect bool              `json:"autoReconnect"`
+	AttachHost    string            `json:"attachHost"` // 覆盖 9208 下发的附件服务器 IP（为空用下发值）
+	AutoAttach    bool              `json:"autoAttach"`
+	UpRSA         bool              `json:"upRsa"`               // 上行RSA加密（需已收到平台 8A00 公钥）
+	Transport     string            `json:"transport,omitempty"` // tcp（默认）/ udp
+	Reply8500     string            `json:"reply8500,omitempty"` // 8500 应答方式：空 = 只回 0500；"ack0500" = 先回 0001 通用应答再回 0500
+	SafetyStd     string            `json:"safetyStd,omitempty"` // 主动安全标准：空 = 苏标 JSATL12（默认）；"gd" = 粤标 T/GDRTA 002-2020
+	MediaSrc      string            `json:"mediaSrc,omitempty"`  // 附件画面来源（全部通道默认）：空 = 合成测试图；image / video / camera（见 mediasrc.go）
+	MediaCh       map[string]string `json:"mediaCh,omitempty"`   // 按通道覆盖：键为通道号 64/65/66/67，值同上；未列的通道沿用 MediaSrc
 }
 
 // transport 传输方式：udp 或 tcp（空/其它值按 tcp）
@@ -220,9 +221,8 @@ type Terminal struct {
 	ftpCtl      map[int]chan int
 	adasPending map[string]adasAlarm
 
-	// 媒体源：前端回传的当前画面（视频/摄像头抓帧）
-	frame   []byte
-	frameAt time.Time
+	// 媒体源：前端回传的当前画面（视频/摄像头抓帧），键为通道号（"0" = 全部通道）
+	frames map[string]frameBuf
 }
 
 var stateDir = "state"
