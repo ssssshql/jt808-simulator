@@ -268,6 +268,26 @@ func (t *Terminal) currentImage(ch int) []byte {
 	return nil
 }
 
+// stampEnabled 是否给附件画面烧入时间水印（默认烧，Config.NoStamp 关闭）
+func (t *Terminal) stampEnabled() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return !t.Cfg.NoStamp
+}
+
+// stampIf 按需烧入时间水印（合成图、上传图片、抓帧都走这里，保证附件与预览一致）
+func (t *Terminal) stampIf(img []byte, ch int) []byte {
+	if len(img) == 0 || !t.stampEnabled() {
+		return img
+	}
+	return stampJPEG(img, ch, time.Now())
+}
+
+// attachmentImage 该通道用于附件的图片：有画面就烧入时间水印；没有返回 nil（调用方回退合成图）
+func (t *Terminal) attachmentImage(ch int) []byte {
+	return t.stampIf(t.currentImage(ch), ch)
+}
+
 // attachmentVideo 该通道视频附件内容：上传的源视频优先，否则内置 alarm.mp4
 func (t *Terminal) attachmentVideo(ch int) []byte {
 	t.mu.Lock()
@@ -406,6 +426,15 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
 	})
+	handle("POST /mediasrc/stamp", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
+		on := r.URL.Query().Get("on") != "0"
+		t.mu.Lock()
+		t.Cfg.NoStamp = !on
+		t.markDirty()
+		t.mu.Unlock()
+		t.logf("附件画面时间水印已%s", map[bool]string{true: "开启", false: "关闭"}[on])
+		writeJSON(w, 200, map[string]any{"ok": true, "on": on})
+	})
 	// 预览：该通道此刻会用于附件的画面（响应头 X-JT808-Source 标注来源）
 	handle("GET /attach-preview", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		ch, ok := queryCh(r)
@@ -416,16 +445,22 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 		t.mu.Lock()
 		srcTyp, fb := t.mediaSrcOf(ch), t.frameOf(ch)
 		t.mu.Unlock()
-		img, source := t.currentImage(ch), "image"
-		if len(fb.data) > 0 && (srcTyp == "video" || srcTyp == "camera") {
-			source = "frame"
-		} else if img == nil {
+		var img []byte
+		source := "image"
+		switch {
+		case len(fb.data) > 0 && (srcTyp == "video" || srcTyp == "camera"):
+			img, source = fb.data, "frame"
+		case srcTyp == "image":
+			img = t.currentImage(ch)
+		}
+		if img == nil {
 			jc := ch
 			if jc == 0 {
 				jc = 64
 			}
 			img, source = makeJPEG(jc, 2, 3, time.Now()), "synthetic"
 		}
+		img = t.stampIf(img, ch)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("X-JT808-Source", source)

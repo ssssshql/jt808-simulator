@@ -35,6 +35,7 @@ type Config struct {
 	SafetyStd     string            `json:"safetyStd,omitempty"` // 主动安全标准：空 = 苏标 JSATL12（默认）；"gd" = 粤标 T/GDRTA 002-2020
 	MediaSrc      string            `json:"mediaSrc,omitempty"`  // 附件画面来源（全部通道默认）：空 = 合成测试图；image / video / camera（见 mediasrc.go）
 	MediaCh       map[string]string `json:"mediaCh,omitempty"`   // 按通道覆盖：键为通道号 64/65/66/67，值同上；未列的通道沿用 MediaSrc
+	NoStamp       bool              `json:"noStamp,omitempty"`   // 附件画面不烧时间水印（默认烧，见 stamp.go）
 }
 
 // transport 传输方式：udp 或 tcp（空/其它值按 tcp）

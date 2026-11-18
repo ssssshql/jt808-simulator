@@ -11,6 +11,7 @@ let msPending = '';       // 文件选择器等待的类型（image/video）
 let msUpTick = 0;         // 上传时间戳：变化时刷新预览地址
 let msLoaded = '';        // 已加载预览的签名（避免轮询时重置播放）
 let msDevId = '';         // 选中的摄像头设备
+const msCamTried = new Set(); // 本次页面加载已自动尝试开启摄像头的通道（避免每次轮询重试）
 const msCanvas = document.createElement('canvas');
 const MS_NAME = { '': '默认合成图', image: '图片文件', video: '视频文件', camera: '电脑摄像头' };
 const MS_SRC = { frame: '当前播放画面（抓帧）', image: '上传的图片文件', synthetic: '合成彩条测试图' };
@@ -60,8 +61,10 @@ async function msListDevices() {
   wrap.hidden = false;
 }
 
-async function msCamera() {
-  if (!navigator.mediaDevices?.getUserMedia) return toast('当前环境不支持摄像头（需 localhost 或 HTTPS）');
+async function msCamera(quiet) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return quiet ? undefined : toast('当前环境不支持摄像头（需 localhost 或 HTTPS）');
+  }
   try {
     const video = { width: { ideal: 1280 } };
     if (msDevId) video.deviceId = { exact: msDevId };
@@ -74,10 +77,27 @@ async function msCamera() {
     const j = await (await fetch(msUrl('mediasrc', 'kind=camera'), { method: 'POST' })).json();
     if (!j.ok) { msStop(); return toast(j.error || '设置失败'); }
     await msListDevices();
-    toast(`${msChName()} 已开启摄像头，循环抓帧中`, 'ok');
+    if (!quiet) toast(`${msChName()} 已开启摄像头，循环抓帧中`, 'ok');
     msStartCapture();
     poll();
-  } catch (e) { toast('摄像头打开失败：' + e.message + '（请允许摄像头权限）'); }
+  } catch (e) {
+    if (!quiet) toast('摄像头打开失败：' + e.message + '（请允许摄像头权限）');
+    else console.warn('自动恢复摄像头失败：', e.message);
+  }
+}
+
+// 程序重启后：配置里仍是「电脑摄像头」，但视频流必须重新获取（重启会让后端抓帧缓存清空）。
+// 权限已被浏览器记住时可静默恢复；不支持或被拒则让页面显示「待开启」+ 开启按钮，而不是一个黑框。
+async function msAutoCamera() {
+  if (msStream || msCamTried.has(msCh) || !navigator.mediaDevices?.getUserMedia) return;
+  msCamTried.add(msCh);
+  try {
+    if (navigator.permissions?.query) {
+      const p = await navigator.permissions.query({ name: 'camera' }).catch(() => null);
+      if (p && p.state === 'denied') return;
+    }
+    await msCamera(true);
+  } catch (e) { console.warn('自动恢复摄像头失败：', e.message); }
 }
 
 // 预览该通道此刻会用于附件的画面（后端响应头标注来源）
@@ -147,18 +167,33 @@ $('#msFile').onchange = async e => {
 
 $('#msCam').onchange = e => { msDevId = e.target.value; msCamera(); };
 $('#msPrev').onclick = msPreview;
+$('#msCamOn').onclick = () => msCamera();
+// 时间水印开关（服务端在生成附件图片/预览时烧入，改完立即生效）
+$('#msStamp').onchange = async e => {
+  const on = e.target.checked;
+  try {
+    const j = await (await fetch(api('mediasrc/stamp') + '?on=' + (on ? 1 : 0), { method: 'POST' })).json();
+    if (!j.ok) return toast(j.error || '设置失败');
+    toast(on ? '附件画面已烧入时间水印' : '已关闭时间水印', 'ok');
+    poll();
+  } catch (err) { toast('设置失败：' + err.message); }
+};
 
 function renderMs(s) {
   const ms = (s.mediaSrc || {})[msCh] || { src: '', own: true, frameAge: -1, frameSize: 0 };
   const src = ms.src || '';
   const inherited = msCh !== '0' && !ms.own && !!src; // 该通道没有单独设置，沿用「全部通道」
+  const camIdle = src === 'camera' && !msStream;      // 配置是摄像头但流还没拿到（程序重启 / 权限被拒）
   $$('#msCh button').forEach(b => b.classList.toggle('on', b.dataset.ch === msCh));
   $$('#msKind button').forEach(b => b.classList.toggle('on', b.dataset.ms === src));
-  $('#msTag').textContent = (MS_NAME[src] || src) + (inherited ? '（继承全部）' : '');
-  $('#msTag').className = 'tag ' + (src ? 'ok' : '');
+  $('#msTag').textContent = camIdle ? '电脑摄像头（待开启）' : (MS_NAME[src] || src) + (inherited ? '（继承全部）' : '');
+  $('#msTag').className = 'tag ' + (src && !camIdle ? 'ok' : '');
   $('#msPreviewWrap').hidden = !src;
-  $('#msVideo').hidden = src !== 'video' && src !== 'camera';
+  $('#msVideo').hidden = src !== 'video' && !(src === 'camera' && msStream);
   $('#msImg').hidden = src !== 'image';
+  $('#msCamOff').hidden = !camIdle;
+  if (document.activeElement !== $('#msStamp')) $('#msStamp').checked = s.mediaStamp !== false;
+  if (camIdle) msAutoCamera();
 
   // 加载/刷新预览（签名未变不动它，避免打断播放）
   const sig = TID + ':' + msCh + ':' + src + ':' + msUpTick;
@@ -177,19 +212,26 @@ function renderMs(s) {
     msStartCapture();
   }
 
+  const stampTip = s.mediaStamp === false ? '' : '画面左下角烧入时间与通道号。';
   const frameText = ms.frameAge >= 0 ? `最近一帧 ${ms.frameAge} 秒前（${(ms.frameSize / 1024).toFixed(0)} KB）` : '';
   // 抓帧靠浏览器定时器，窗口最小化 / 标签页在后台会被节流；此时附件仍沿用最后一帧，不退回合成图
   const staleTip = ms.stale ? `前端抓帧已暂停 ${ms.frameAge} 秒（窗口最小化或标签页在后台会被节流），附件仍沿用这一帧。` : '';
   const inhTip = inherited ? '当前继承「全部通道」设置，在「全部通道」或本通道重新选择即可覆盖。' : '';
-  $('#msHint').textContent = msChName() + '：' + (src === ''
-    ? '合成彩条测试图 + 内置 alarm.mp4。选择图片/视频文件或摄像头后，上传附件时截取当前播放画面（每秒抓帧，附件始终用最新一帧）。'
-    : src === 'image'
-      ? '图片附件用上传的这张图片；视频附件仍用内置 alarm.mp4。'
-      : src === 'camera'
-        ? (frameText ? `摄像头循环抓帧，${frameText}。` : '等待摄像头画面…') + staleTip + '图片附件取当前画面；摄像头无源视频，视频附件仍用内置 alarm.mp4。'
-        : (frameText ? `视频循环播放，${frameText}。` : '视频加载中…') + staleTip + '图片附件截取当前播放画面，视频附件使用上传的源视频。') + inhTip;
+  let body;
+  if (src === '') {
+    body = '合成彩条测试图 + 内置 alarm.mp4。选择图片/视频文件或摄像头后，上传附件时截取当前播放画面（每秒抓帧，附件始终用最新一帧）。';
+  } else if (src === 'image') {
+    body = '图片附件用上传的这张图片；视频附件仍用内置 alarm.mp4。';
+  } else if (src === 'camera') {
+    body = camIdle
+      ? '摄像头未开启：程序重启后浏览器不会自动恢复视频流（也可能权限被拒），此时附件图片会用合成彩条图。点上面的「电脑摄像头」或下面的「开启摄像头」恢复。'
+      : (frameText ? `摄像头循环抓帧，${frameText}。` : '等待摄像头画面…') + staleTip + '图片附件取当前画面；摄像头无源视频，视频附件仍用内置 alarm.mp4。';
+  } else {
+    body = (frameText ? `视频循环播放，${frameText}。` : '视频加载中…') + staleTip + '图片附件截取当前播放画面，视频附件使用上传的源视频。';
+  }
+  $('#msHint').textContent = msChName() + '：' + body + stampTip + inhTip;
 }
 
 onState(s => page === 'adas' && renderMs(s));
 onPage('adas', () => S && renderMs(S));
-onSwitch(() => { msStop(); msUpTick = 0; });
+onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); });

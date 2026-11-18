@@ -273,7 +273,12 @@
           <div class="ms-preview" id="msPreviewWrap" hidden style="margin-top:12px;text-align:center">
             <video id="msVideo" loop muted playsinline hidden style="max-width:100%;max-height:260px;border-radius:8px;background:#000"></video>
             <img id="msImg" hidden style="max-width:100%;max-height:260px;border-radius:8px">
+            <div id="msCamOff" hidden style="padding:20px;border:1px dashed rgba(128,128,128,.45);border-radius:8px;font-size:13px">
+              摄像头未开启，附件图片会退回合成彩条图<br>
+              <button class="btn sm" id="msCamOn" style="margin-top:10px">开启摄像头</button>
+            </div>
           </div>
+          <label class="switch" style="margin-top:12px"><input type="checkbox" id="msStamp"><span></span>画面烧入时间水印（附件图片与预览）</label>
           <p class="hint" id="msHint"></p>
           <div class="btns"><button class="btn sm" id="msPrev">预览附件画面</button><span class="muted" id="msPrevTag"></span></div>
           <div id="msPrevWrap" hidden style="margin-top:10px;text-align:center"><img id="msPrevImg" style="max-width:100%;max-height:260px;border-radius:8px"></div>

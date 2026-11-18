@@ -104,16 +104,16 @@ func (t *Terminal) attachFiles(a adasAlarm, total int, no string) []AttFile {
 	code := fmt.Sprintf("%02X%02X", a.attr, a.typ)
 	mch := mediaChOf(a.attr)
 	var files []AttFile
-	cur := t.currentImage(mch) // 同一次上报的图片共用同一个源的画面，循环外取一次（图片模式避免重复读盘）
+	// 同一次上报的图片共用同一画面（含烧入的时间水印），循环外取一次：图片模式避免重复读盘，抓帧模式避免每张图各解一次码
+	cur := t.attachmentImage(mch)
+	if cur == nil {
+		cur = t.stampIf(makeJPEG(ch, 2, 3, time.Now()), mch)
+	}
 	for i := 0; i < total; i++ {
 		if i == total-1 && total > 1 {
 			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, t.attachmentVideo(mch)})
 		} else {
-			img := cur
-			if img == nil {
-				img = makeJPEG(ch, 2, 3, time.Now())
-			}
-			files = append(files, AttFile{fmt.Sprintf("00_%d_%s_%d_%s.jpg", ch, code, i, no), 0, img})
+			files = append(files, AttFile{fmt.Sprintf("00_%d_%s_%d_%s.jpg", ch, code, i, no), 0, cur})
 		}
 	}
 	return files
