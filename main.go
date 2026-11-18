@@ -261,7 +261,9 @@ func main() {
 	if *web != "" { // Web 模式：多终端（state/terminals.json），-c 命令作用于默认终端
 		m := NewManager(flagCfg)
 		logDisk.Start() // 报文日志落盘（state/logs，可在页面关闭）
-		go m.saveLoop()
+		stopSave := make(chan struct{})
+		defer close(stopSave)
+		go m.saveLoopStop(stopSave)
 		go func() { // systemd stop / Ctrl+C：先保存全部终端状态
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -285,6 +287,7 @@ func main() {
 	go t.motionLoop()
 	go t.saveLoop()
 	defer func() {
+		close(t.quit)
 		t.mu.Lock()
 		t.save()
 		t.mu.Unlock()

@@ -83,11 +83,15 @@ function renderStress(v) {
     .map(([a, b]) => `<dt>${a}</dt><dd class="mono">${typeof b === 'number' ? stNum(b) : esc(b)}</dd>`).join('');
   $('#stErr').hidden = !v.lastError; $('#stErr').textContent = v.lastError ? '最近错误：' + v.lastError : '';
 }
+let pollingStress = false;
 async function pollStress() {
-  try { STRESS = await (await fetch('api/stress', { cache: 'no-store' })).json(); renderStress(STRESS); } catch (_) { }
+  if (document.hidden || pollingStress) return;
+  pollingStress = true;
+  try { STRESS = await fetchJSON('api/stress', { cache: 'no-store' }); renderStress(STRESS); } catch (_) { }
+  finally { pollingStress = false; }
 }
 let stTick = 0;
-setInterval(() => { if (page === 'stress' || (STRESS && STRESS.running) || ++stTick % 5 === 0) pollStress(); }, 1000);
+setInterval(() => { if (!document.hidden && (page === 'stress' || (STRESS && STRESS.running) || ++stTick % 5 === 0)) pollStress(); }, 1000);
 onPage('stress', pollStress);
 pollStress();
 
@@ -116,7 +120,7 @@ $('#repClose').onclick = () => { $('#repModal').hidden = true; $('#repFrame').sr
 $('#repHtml').onclick = () => exportReport(repId, 'html');
 async function loadReports() {
   try {
-    const j = await (await fetch('api/stress/reports', { cache: 'no-store' })).json();
+    const j = await fetchJSON('api/stress/reports', { cache: 'no-store' });
     const list = j.reports || [];
     $('#stReports').innerHTML = list.length ? list.map(r => `<tr><td class="mono">${esc(r.id)}</td><td class="mono">${esc(r.target)}</td><td class="r">${stNum(r.count)}</td>
       <td class="r">${stNum(r.peakOnline)}</td><td class="r mono">${dur(r.durationS * 1000)}</td><td class="r ${r.failRate > 0 ? 'err-text' : ''}">${r.failRate}%</td>

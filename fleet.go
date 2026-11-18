@@ -5,7 +5,6 @@ package main
 import (
 	"net/http"
 	"sort"
-	"strconv"
 )
 
 type FleetLast struct {
@@ -90,12 +89,7 @@ func (m *Manager) Fleet() []FleetItem {
 		out = append(out, it)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		a, e1 := strconv.Atoi(out[i].ID)
-		b, e2 := strconv.Atoi(out[j].ID)
-		if e1 == nil && e2 == nil {
-			return a < b
-		}
-		return out[i].ID < out[j].ID
+		return compareTermID(out[i].ID, out[j].ID)
 	})
 	return out
 }

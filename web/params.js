@@ -7,8 +7,7 @@ let pSig = '';
 
 async function reloadParams() {
   try {
-    const r = await fetch(api('params'));
-    P = await r.json();
+    P = await fetchJSON(api('params'));
     pDirty.clear();
     renderParamsPage();
   } catch (e) { toast('读取参数失败：' + e.message); }
@@ -35,7 +34,7 @@ function bitGrid(bits, value, attrs, width = 32) {
 function optSelect(opts, value, attrs) {
   const has = opts.some(o => String(o.v) === String(value));
   return `<select ${attrs}>${has ? '' : `<option value="${esc(value)}" selected>${esc(value)}（非标准值）</option>`}${opts.map(o =>
-    `<option value="${o.v}" ${String(o.v) === String(value) ? 'selected' : ''}>${o.v} · ${esc(o.l)}</option>`).join('')}</select>`;
+    `<option value="${esc(o.v)}" ${String(o.v) === String(value) ? 'selected' : ''}>${esc(o.v)} · ${esc(o.l)}</option>`).join('')}</select>`;
 }
 function withUnit(ctl, unit) { return unit ? `<div class="input-unit">${ctl}<span>${esc(unit)}</span></div>` : ctl; }
 
@@ -107,8 +106,8 @@ function paramRow(p) {
   const desc = [p.help, p.min != null && p.max != null ? `范围 ${p.min}~${p.max}` : '', p.schema ? '' : `默认 ${p.def === '' ? '空' : (p.opts?.find(o => String(o.v) === p.def)?.l || p.def)}`].filter(Boolean).join('；');
   const actions = p.readOnly ? '<span class="tag">只读</span>' : `${p.known ? `<button class="btn xs ghost reset" data-pdef="${p.id}" title="恢复该参数默认值">默认</button>` : `<button class="btn xs ghost danger" data-pdel="${p.id}">删除</button>`}`;
   const body = p.schema ? structEditor(p, curFields(p)) : p.bits ? bitGrid(p.bits, v, `data-pbit="${p.id}"`, ({ DWORD: 32, WORD: 16, BYTE: 8 })[p.type]) : '';
-  return `<div class="prow ${wide ? 'wide' : ''} ${dirty ? 'dirty' : ''}" data-row="${p.id}">
-    <div class="pn"><div class="t"><span class="id">0x${p.id}</span>${esc(p.name)}<span class="tag">${p.type}${p.unit && wide ? ' · ' + esc(p.unit) : ''}</span>${p.std ? `<span class="tag info">${esc(p.std)}</span>` : ''}
+  return `<div class="prow ${wide ? 'wide' : ''} ${dirty ? 'dirty' : ''}" data-row="${esc(p.id)}">
+    <div class="pn"><div class="t"><span class="id">0x${esc(p.id)}</span>${esc(p.name)}<span class="tag">${esc(p.type)}${p.unit && wide ? ' · ' + esc(p.unit) : ''}</span>${p.std ? `<span class="tag info">${esc(p.std)}</span>` : ''}
       ${wide ? `<div class="grow"></div>${ctl}${actions}` : ''}</div><div class="d">${esc(desc)}</div>${body}</div>
     ${wide ? '' : `<div class="pv">${ctl}${actions}</div>`}</div>`;
 }
@@ -120,11 +119,11 @@ function renderParamsPage() {
   P.params.forEach(p => counts[p.group] = (counts[p.group] || 0) + 1);
   const groups = P.groups.filter(g => counts[g]);
   if (!groups.includes(pGroup)) pGroup = groups[0];
-  $('#pGroups').innerHTML = groups.map(g => `<button class="${!f && g === pGroup ? 'on' : ''}" data-g="${g}">${g}<em>${counts[g]}</em></button>`).join('');
+  $('#pGroups').innerHTML = groups.map(g => `<button class="${!f && g === pGroup ? 'on' : ''}" data-g="${esc(g)}">${esc(g)}<em>${counts[g]}</em></button>`).join('');
   const list = P.params.filter(p => f ? (p.id + p.name + (p.help || '')).toLowerCase().includes(f) : p.group === pGroup);
   const byGroup = {};
   list.forEach(p => (byGroup[p.group] = byGroup[p.group] || []).push(p));
-  $('#pList').innerHTML = Object.entries(byGroup).map(([g, ps]) => `<div class="card pgroup"><h2>${g}<span class="tag">${ps.length} 项</span><div class="grow"></div>
+  $('#pList').innerHTML = Object.entries(byGroup).map(([g, ps]) => `<div class="card pgroup"><h2>${esc(g)}<span class="tag">${ps.length} 项</span><div class="grow"></div>
       ${g === 'CAN' ? '<button class="btn xs" id="addCan">＋ 添加 CAN ID 采集项（0x0111~0x01FF）</button>' : ''}</h2>
       <div class="prows">${ps.map(paramRow).join('')}</div></div>`).join('') || '<div class="card empty">没有匹配的参数</div>';
   updateSaveBar();
@@ -215,7 +214,10 @@ async function addCanParam() {
   toast(`已添加 0x${p.id}，填写后保存`, 'info');
 }
 
-$('#pDiscard').onclick = reloadParams;
+$('#pDiscard').onclick = async () => {
+  if (pDirty.size && !(await confirmBox(`放弃未保存的 ${pDirty.size} 项参数修改？`))) return;
+  reloadParams();
+};
 $('#pSave').onclick = async e => {
   const bad = $$('#pList input.invalid');
   if (bad.length) { bad[0].focus(); return toast('有字段超出取值范围，请先修正'); }

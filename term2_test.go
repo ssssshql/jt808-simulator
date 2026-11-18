@@ -179,7 +179,7 @@ func TestRetransBlindReset(t *testing.T) {
 	body := cat([]byte{1}, u32(0x0029), []byte{4}, u32(7))
 	first := p.sendFrame(0x8103, body[:5], 2, 1)
 	m := p.expect(0x0005, 6*time.Second, nil)
-	if int(binary.BigEndian.Uint16(m.Body)) != first || binary.BigEndian.Uint16(m.Body[2:]) != 1 || binary.BigEndian.Uint16(m.Body[4:]) != 2 {
+	if int(binary.BigEndian.Uint16(m.Body)) != first || m.Body[2] != 1 || binary.BigEndian.Uint16(m.Body[3:]) != 2 {
 		t.Fatalf("0005 %X", m.Body)
 	}
 	last := p.sendFrame(0x8103, body[5:], 2, 2)

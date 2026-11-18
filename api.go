@@ -124,7 +124,8 @@ func serveWeb(addr string, m *Manager) error {
 	url := "http://" + ln.Addr().String()
 	logf("%s  Web 界面: %s", versionString(), url)
 	openBrowser(url)
-	return http.Serve(ln, newWebMux(m))
+	srv := &http.Server{Handler: newWebMux(m), ReadHeaderTimeout: 10 * time.Second}
+	return srv.Serve(ln)
 }
 
 func newWebMux(m *Manager) http.Handler {
@@ -169,7 +170,16 @@ func newWebMux(m *Manager) http.Handler {
 	})
 	handle("GET /profile", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		p := t.exportProfile()
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="jt808sim-%s.json"`, p.Cfg.Phone))
+		safePhone := strings.Map(func(c rune) rune {
+			if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_' {
+				return c
+			}
+			return -1
+		}, p.Cfg.Phone)
+		if safePhone == "" {
+			safePhone = "terminal"
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="jt808sim-%s.json"`, safePhone))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", " ")
@@ -378,7 +388,7 @@ func webGuard(next http.Handler, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
-			host = r.Host
+			host = strings.Trim(r.Host, "[]")
 		}
 		ip := net.ParseIP(host)
 		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {

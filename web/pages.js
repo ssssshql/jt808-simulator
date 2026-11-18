@@ -54,7 +54,7 @@ $('#ups').addEventListener('click', e => {
 });
 
 function renderOverview(s) {
-  if (!$('#dash')) return;   // 页面与脚本版本不一致（缓存）时不渲染，等待自动刷新
+  if (!$('#dash') || page !== 'overview') return;   // 非总览页时不重绘 SVG 与 DOM
   const l = s.loc, k = s.counters, c = s.conn, m = s.motion, lim = speedLimit(s);
   renderRing(s);
   $('#spLim').textContent = lim || '-';
@@ -98,6 +98,7 @@ function renderOverview(s) {
   }
 }
 onState(renderOverview);
+onPage('overview', () => S && renderOverview(S));
 $('#replySeg').onclick = e => { const b = e.target.closest('[data-r]'); if (b) act('setReply', { mode: b.dataset.r }, null, '应答策略：' + b.firstChild.textContent); };
 $('#replyDelaySet').onclick = e => act('setReply', { delay: $('#replyDelay').value }, e.target, '应答延迟已设置');
 $('#replyDelay').addEventListener('keydown', e => { if (e.key === 'Enter') $('#replyDelaySet').click(); });
@@ -110,12 +111,18 @@ document.addEventListener('click', e => {
 $('#modeSeg').onclick = e => { const m = e.target.dataset.m; if (m) act('setMotion', { mode: m }); };
 $('#spd').oninput = e => $('#spdV').textContent = e.target.value + ' km/h';
 $('#spd').onchange = e => act('setMotion', { speed: +e.target.value });
-$('#setPos').onclick = e => act('setPosition', { lng: $('#pLng').value, lat: $('#pLat').value }, e.target, '位置已设定');
+$('#setPos').onclick = e => {
+  const lng = Number($('#pLng').value), lat = Number($('#pLat').value);
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180 || !Number.isFinite(lat) || lat < -90 || lat > 90) {
+    toast('经度范围 -180~180，纬度范围 -90~90'); return;
+  }
+  act('setPosition', { lng: $('#pLng').value, lat: $('#pLat').value }, e.target, '位置已设定');
+};
 $('#setVeh').onclick = e => act('setVehicle', { mileage: $('#vMil').value, fuel: $('#vFuel').value, tires: $('#vTires').value, cabinTemp: $('#vTemp').value }, e.target, '车辆数据已更新');
 $('#cardIn').onclick = e => act('send', { msgId: '0702', params: { status: 1 } }, e.target, '已插卡（0702）');
 $('#cardOut').onclick = e => act('send', { msgId: '0702', params: { status: 2 } }, e.target, '已拔卡（0702）');
 $('#fitMap').onclick = () => maps.mapMotion && S && fitMap(maps.mapMotion, S);
-$('#clearTrack').onclick = () => S && act('setPosition', { lng: S.loc.lng.toFixed(6), lat: S.loc.lat.toFixed(6) }, null, '轨迹已清空');
+$('#clearTrack').onclick = async () => { if (S && await confirmBox('清空当前地图轨迹？')) act('setPosition', { lng: S.loc.lng.toFixed(6), lat: S.loc.lat.toFixed(6) }, null, '轨迹已清空'); };
 
 // 轨迹回放
 $('#rpImport').onclick = () => $('#rpFile').click();
@@ -246,33 +253,50 @@ $('#upSend').onclick = async e => {
   UP[upSel][1].forEach(([k, , d]) => { const v = $('#u_' + k).value; params[k] = typeof d === 'number' ? +v : v; });
   act('send', { msgId: upSel, params }, e.target, upSel + ' 已发送');
 };
-$('#rawSend').onclick = e => act('raw', { line: $('#rawLine').value }, e.target, '原始报文已发送');
+$('#rawSend').onclick = e => {
+  const line = $('#rawLine').value.trim();
+  if (!line) { toast('请输入原始报文内容'); $('#rawLine').focus(); return; }
+  act('raw', { line }, e.target, '原始报文已发送');
+};
 renderUp();
 
 // ================= 主动安全 =================
 // 报警类型表由后端按当前标准（苏标 / 粤标）提供：S.safety.types[外设ID][类型]
 const ADAS_ATTR = { adas: 100, dsm: 101, tpms: 102, bsd: 103 };
-let adasKind = 'adas', adasSig = '', gdPer = 100;
+// 上次选的报警类别与表单值（附件数量等）一并记住，重启后不用每次重填
+let adasKind = localStorage.getItem('jt808.adasKind') || 'adas', adasSig = '', gdPer = 100;
 function fillAdas(s) {
   $$('#adasKind button').forEach(b => b.classList.toggle('on', b.dataset.k === adasKind));
   const types = (s && s.safety && s.safety.types[ADAS_ATTR[adasKind]]) || {};
   const sig = adasKind + JSON.stringify(types);
   if (sig === adasSig) return;
   adasSig = sig;
-  const keep = $('#aType').value;
+  const keep = $('#aType').value || $('#aType').dataset.keepVal || ''; // 上次选的类型（选项是动态生成的）
   $('#aType').innerHTML = Object.entries(types).sort((x, y) => x[0] - y[0])
-    .map(([v, n]) => `<option value="${v}">0x${(+v).toString(16).toUpperCase().padStart(2, '0')} · ${esc(n)}</option>`).join('');
+    .map(([v, n]) => `<option value="${esc(v)}">0x${(+v).toString(16).toUpperCase().padStart(2, '0')} · ${esc(n)}</option>`).join('');
   if ([...$('#aType').options].some(o => o.value === keep)) $('#aType').value = keep;
   const lv = adasKind === 'adas' || adasKind === 'dsm';
   $('#aLevel').disabled = !lv;
 }
-$('#adasKind').onclick = e => { if (e.target.dataset.k) { adasKind = e.target.dataset.k; fillAdas(S); } };
+$('#adasKind').onclick = e => {
+  if (!e.target.dataset.k) return;
+  adasKind = e.target.dataset.k;
+  localStorage.setItem('jt808.adasKind', adasKind);
+  fillAdas(S);
+};
+// 上报表单是「操作参数」而非终端状态，记住上次输入（否则重启后附件数量等回默认值）
+// 注意只放纯前端字段：随终端状态刷新的（如导出上限/保留天数）不在此列
+keepFields(['aType', 'aLevel', 'aFiles', 'aFlag', 'rawLine', 'exIds']);
 $('#adasStd').onclick = async e => {
   const std = e.target.dataset.std;
   if (!std || (S && S.safety.std === std)) return;
   if (await act('setConfig', { safetyStd: std }, e.target, std === 'gd' ? '已切换为粤标' : '已切换为苏标')) { adasSig = ''; window.reloadParams && page === 'params' && reloadParams(); }
 };
-$('#aSend').onclick = e => act('adas', { kind: adasKind, alarmType: +$('#aType').value, level: +$('#aLevel').value, files: +$('#aFiles').value, flag: +$('#aFlag').value }, e.target, '主动安全报警已上报');
+$('#aSend').onclick = e => {
+  const files = +$('#aFiles').value;
+  if (!Number.isFinite(files) || files < 0 || files > 10) { toast('附件数量范围 0~10'); return; }
+  act('adas', { kind: adasKind, alarmType: +$('#aType').value, level: +$('#aLevel').value, files, flag: +$('#aFlag').value }, e.target, '主动安全报警已上报');
+};
 $('#adasAuto').onchange = e => act('setConfig', { autoAttach: e.target.checked ? 1 : 0 }, null, e.target.checked ? '已开启自动上传附件' : '已关闭自动上传附件');
 $('#adasHostSet').onclick = e => act('setConfig', { attachHost: $('#adasHost').value }, e.target, '附件服务器 IP 已保存');
 
@@ -283,15 +307,15 @@ function renderGD(s, force) {
   const sf = s.safety;
   $$('#gdPer button').forEach(b => b.classList.toggle('on', +b.dataset.p === gdPer));
   if (!$('#gpWork').options.length) {
-    $('#gpWork').innerHTML = Object.entries(sf.workNames).map(([v, n]) => `<option value="${v}">0x${(+v).toString(16).toUpperCase().padStart(2, '0')} · ${esc(n)}</option>`).join('');
-    $('#gdSim').innerHTML = Object.entries(sf.upgradeSims).map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join('');
+    $('#gpWork').innerHTML = Object.entries(sf.workNames).map(([v, n]) => `<option value="${esc(v)}">0x${(+v).toString(16).toUpperCase().padStart(2, '0')} · ${esc(n)}</option>`).join('');
+    $('#gdSim').innerHTML = Object.entries(sf.upgradeSims).map(([v, n]) => `<option value="${esc(v)}">${esc(n)}</option>`).join('');
   }
   const p = curPer(s), sig = gdPer + JSON.stringify(p);
   if (force || sig !== gpSig) {
     gpSig = sig;
     if (!editing.has('gpWork')) $('#gpWork').value = p.work;
     $('#gpAlarm').innerHTML = Object.entries(sf.alarmBits).map(([b, n]) =>
-      `<label title="bit${b} ${esc(n)}"><input type="checkbox" data-gpbit="${b}" ${(Math.floor((p.alarm || 0) / 2 ** b) % 2) ? 'checked' : ''}><em>${b}</em><span>${esc(n)}</span></label>`).join('');
+      `<label title="bit${esc(b)} ${esc(n)}"><input type="checkbox" data-gpbit="${esc(b)}" ${(Math.floor((p.alarm || 0) / 2 ** b) % 2) ? 'checked' : ''}><em>${esc(b)}</em><span>${esc(n)}</span></label>`).join('');
     GP_KEYS.forEach(k => setVal('gp_' + k, p[k]));
   }
   setVal('gdInst', sf.gd.installErr ? '0x' + sf.gd.installErr.toString(16).toUpperCase() : '0');
@@ -365,16 +389,17 @@ function renderAreas(s) {
   if (sig === renderAreas.sig) return;
   renderAreas.sig = sig;
   const t = a => a.start && !a.start.startsWith('0001') ? `${fmtDT(a.start)} ~ ${fmtDT(a.end)}` : '-';
-  $('#arBody').innerHTML = (s.areas || []).map(a => `<tr><td><span class="tag ${a.kind === 4 ? 'info' : 'ok'}">${AREA_KIND[a.kind]}</span></td><td class="mono">${a.id}</td>
+  $('#arBody').innerHTML = (s.areas || []).map(a => `<tr><td><span class="tag ${a.kind === 4 ? 'info' : 'ok'}">${esc(AREA_KIND[a.kind])}</span></td><td class="mono">${esc(a.id)}</td>
     <td>${esc(a.name || '-')}</td><td class="mono">0x${hex4(a.attr)}</td><td>${(a.points || []).length}</td><td>${a.maxSpeed ? a.maxSpeed + ' km/h' : '-'}</td>
-    <td class="muted">${t(a)}</td><td class="r"><button class="btn xs ghost danger" data-delarea="${a.kind}:${a.id}">删除</button></td></tr>`).join('')
+    <td class="muted">${t(a)}</td><td class="r"><button class="btn xs ghost danger" data-delarea="${esc(a.kind)}:${esc(a.id)}">删除</button></td></tr>`).join('')
     || '<tr><td colspan="8" class="empty">平台未下发区域（8600/8602/8604/8606）</td></tr>';
 }
 onState(s => page === 'areas' && renderAreas(s));
-document.addEventListener('click', e => {
+document.addEventListener('click', async e => {
   const b = e.target.closest('[data-delarea]');
   if (!b) return;
   const [kind, id] = b.dataset.delarea.split(':').map(Number);
+  if (!(await confirmBox(`删除${AREA_KIND[kind] || '区域'} #${id}？`))) return;
   act('deleteArea', { kind, id }, b, '区域已删除');
 });
 $('#areaClear').onclick = async e => { if (await confirmBox(e.target.dataset.confirm)) act('deleteArea', {}, e.target, '已删除全部区域'); };
@@ -462,7 +487,10 @@ $('#page-config').addEventListener('input', e => {
 });
 $('#page-config').addEventListener('change', e => { if (e.target.dataset.cfg) { e.target.dataset.dirty = 1; $('#cfgBar').hidden = false; validateCfg(); } });
 function clearCfgDirty() { $$('[data-cfg]').forEach(el => { delete el.dataset.dirty; el.classList.remove('invalid'); }); $('#cfgBar').hidden = true; }
-$('#cfgDiscard').onclick = () => { clearCfgDirty(); S && renderConfig(S, true); };
+$('#cfgDiscard').onclick = async () => {
+  if (!(await confirmBox('放弃未保存的终端配置修改？'))) return;
+  clearCfgDirty(); S && renderConfig(S, true);
+};
 $('#cfgSave').onclick = async e => {
   if (!validateCfg()) { toast('请先修正标红的字段'); return; }
   if (await act('setConfig', cfgValues(), e.target, '终端配置已保存')) { clearCfgDirty(); loadTerms(); }
@@ -495,7 +523,7 @@ onPage('config', () => S && renderConfig(S));
 onSwitch(() => clearCfgDirty());
 
 // 档案导出 / 导入
-$('#profExport').onclick = () => { location.href = api('profile'); toast('终端档案已开始下载', 'ok'); };
+$('#profExport').onclick = () => { downloadURL(api('profile')); };
 $('#profImport').onclick = () => $('#profFile').click();
 $('#profFile').onchange = async e => {
   const f = e.target.files[0];

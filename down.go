@@ -147,6 +147,10 @@ func (t *Terminal) ack(m *Msg, result int) {
 
 // assemble 下行分包重组；未收齐返回 nil。升级包每包单独应答
 func (t *Terminal) assemble(m *Msg) *Msg {
+	if m.Total <= 0 || m.Index < 1 || m.Index > m.Total {
+		t.errf("%04X 分包序号非法：%d/%d", m.ID, m.Index, m.Total)
+		return nil
+	}
 	t.mu.Lock()
 	p := t.downParts[m.ID]
 	if p == nil || p.total != m.Total {
@@ -203,7 +207,10 @@ func (t *Terminal) checkPartials() {
 			}
 		}
 		sort.Ints(miss)
-		body := cat(u16(p.first), u16(len(miss)))
+		if len(miss) > 255 {
+			miss = miss[:255]
+		}
+		body := cat(u16(p.first), []byte{byte(len(miss))})
 		for _, i := range miss {
 			body = cat(body, u16(i))
 		}

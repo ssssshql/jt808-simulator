@@ -34,12 +34,26 @@ func ungbk(b []byte) string {
 	return string(s)
 }
 
-// bcd 数字串 -> 定长 BCD（左补 0）
+// bcd 数字串 -> 定长 BCD（左补 0，非十六进制字符按 0 处理，确保返回精确 n 字节）
 func bcd(s string, n int) []byte {
+	var clean strings.Builder
+	clean.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			clean.WriteByte(c)
+		} else {
+			clean.WriteByte('0')
+		}
+	}
+	s = clean.String()
 	if len(s) < n*2 {
 		s = strings.Repeat("0", n*2-len(s)) + s
 	}
-	b, _ := hex.DecodeString(s[len(s)-n*2:])
+	b, err := hex.DecodeString(s[len(s)-n*2:])
+	if err != nil || len(b) != n {
+		return make([]byte, n)
+	}
 	return b
 }
 
@@ -56,9 +70,12 @@ func fixedPad(s string, n int, pad byte) []byte {
 	return append(b, bytes.Repeat([]byte{pad}, n-len(b))...)
 }
 
-// lstr 1 字节长度前缀字符串
+// lstr 1 字节长度前缀字符串（超过 255 字节截断，避免长度溢出回绕）
 func lstr(s string) []byte {
 	b := gbk(s)
+	if len(b) > 255 {
+		b = b[:255]
+	}
 	return append([]byte{byte(len(b))}, b...)
 }
 
@@ -85,15 +102,33 @@ func escape(b []byte) []byte {
 	return out.Bytes()
 }
 
-func unescape(b []byte) []byte {
+func unescapeStrict(b []byte) ([]byte, bool) {
 	out := make([]byte, 0, len(b))
 	for i := 0; i < len(b); i++ {
-		if b[i] == 0x7d && i+1 < len(b) {
-			out = append(out, b[i+1]+0x7c) // 01->7d, 02->7e
+		if b[i] == 0x7d {
+			if i+1 >= len(b) {
+				return nil, false
+			}
+			switch b[i+1] {
+			case 0x01:
+				out = append(out, 0x7d)
+			case 0x02:
+				out = append(out, 0x7e)
+			default:
+				return nil, false
+			}
 			i++
 		} else {
 			out = append(out, b[i])
 		}
+	}
+	return out, true
+}
+
+func unescape(b []byte) []byte {
+	out, ok := unescapeStrict(b)
+	if !ok {
+		return nil
 	}
 	return out
 }
@@ -154,8 +189,8 @@ type Msg struct {
 
 // Parse raw 为去掉首尾 0x7e 的转义数据
 func Parse(raw []byte) *Msg {
-	d := unescape(raw)
-	if len(d) < 13 {
+	d, ok := unescapeStrict(raw)
+	if !ok || len(d) < 13 {
 		return nil
 	}
 	m := &Msg{OK: bcc(d[:len(d)-1]) == d[len(d)-1]}
@@ -187,9 +222,13 @@ func Parse(raw []byte) *Msg {
 		m.Index = int(binary.BigEndian.Uint16(d[pos+2:]))
 		pos += 4
 	}
-	end := pos + props&0x3FF
-	if end > len(d) {
-		end = len(d)
+	bodyLen := props & 0x3FF
+	end := pos + bodyLen
+	if end != len(d) {
+		m.OK = false
+		if end > len(d) {
+			end = len(d)
+		}
 	}
 	if pos > end {
 		pos = end

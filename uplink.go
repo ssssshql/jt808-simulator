@@ -165,17 +165,20 @@ func (t *Terminal) sendUplink(id int, p map[string]any) error {
 	return err
 }
 
-// logout 0003 注销：平台应答后清除鉴权码并下线
+// logout 0003 注销：平台应答成功后清除鉴权码并下线
 func (t *Terminal) logout() error {
 	r, err := t.sendWait(0x0003, nil, "")
 	if err != nil {
 		return err
 	}
+	if r != 0 {
+		return fmt.Errorf("注销失败（平台结果 %d）", r)
+	}
 	t.mu.Lock()
 	t.Cfg.Token = ""
 	t.markDirty()
 	t.mu.Unlock()
-	t.Stop(fmt.Sprintf("注销（平台结果 %d），已清除鉴权码", r))
+	t.Stop("注销成功，已清除鉴权码")
 	return nil
 }
 

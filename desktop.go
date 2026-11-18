@@ -52,7 +52,8 @@ func runDesktop() {
 
 	m := NewManager(Config{})
 	logDisk.Start() // 报文日志落盘（state/logs，可在页面关闭）
-	go m.saveLoop()
+	stopSave := make(chan struct{})
+	go m.saveLoopStop(stopSave)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -66,7 +67,8 @@ func runDesktop() {
 		pageURL = url + "?k=" + token
 	}
 	logf("%s  桌面版，内置服务: %s  状态目录: %s", versionString(), url, stateDir)
-	go http.Serve(ln, webGuard(newWebMux(m), token))
+	srv := &http.Server{Handler: webGuard(newWebMux(m), token), ReadHeaderTimeout: 10 * time.Second}
+	go srv.Serve(ln)
 
 	// 启动页只做一次跳转：窗口直接加载本地服务，SSE / 长连接不经过 Wails 资源服务器
 	boot := fmt.Sprintf(`<!doctype html><meta charset="utf-8"><title>JT808 模拟器</title>
@@ -157,7 +159,13 @@ func runDesktop() {
 			saveWin(ctx)
 			return false // 不阻止关闭
 		},
-		OnShutdown: func(ctx context.Context) { m.SaveAll() },
+		OnShutdown: func(ctx context.Context) {
+			close(stopSave)
+			shCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			srv.Shutdown(shCtx)
+			m.SaveAll()
+		},
 		Windows: &windows.Options{
 			WebviewUserDataPath: filepath.Join(filepath.Dir(stateDir), "webview"),
 			WindowClassName:     winClassName,

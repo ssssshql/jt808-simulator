@@ -271,6 +271,38 @@ func TestMediaChannel(t *testing.T) {
 	}
 }
 
+// 附件视频预览：标注来源（录制片段 / 源视频 / 内置彩条片），MIME 按实际格式
+func TestVideoPreview(t *testing.T) {
+	stateDir = t.TempDir()
+	m := NewManager(Config{Host: "127.0.0.1", Port: 1, Phone: "13800000001"})
+	defer stopAll(m)
+	term := m.Get(m.Default())
+	h := newWebMux(m)
+	get := func(ch string) (*httptest.ResponseRecorder, string, string) {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/api/t/"+term.ID+"/videoclip?ch="+ch, nil))
+		return w, w.Header().Get("X-JT808-Source"), w.Header().Get("Content-Type")
+	}
+
+	if w, src, ct := get("64"); src != "builtin" || ct != "video/mp4" || !bytes.Equal(w.Body.Bytes(), alarmMP4) {
+		t.Fatalf("默认应为内置 alarm.mp4: src=%q ct=%q len=%d", src, ct, w.Body.Len())
+	}
+
+	term.setCamera(64, true)
+	clip := append([]byte("\x00\x00\x00\x18ftypmp42"), bytes.Repeat([]byte("x"), 200)...)
+	if err := term.setClip(64, "video/mp4", clip); err != nil {
+		t.Fatal(err)
+	}
+	if w, src, ct := get("64"); src != "clip" || ct != "video/mp4" || !bytes.Equal(w.Body.Bytes(), clip) {
+		t.Fatalf("应回传录制片段: src=%q ct=%q len=%d", src, ct, w.Body.Len())
+	}
+
+	term.setClip(64, "video/webm", clip)
+	if _, src, ct := get("64"); src != "clip" || ct != "video/webm" {
+		t.Fatalf("WebM 片段应按 video/webm 返回: src=%q ct=%q", src, ct)
+	}
+}
+
 // 媒体文件必须支持 Range：<video> 做 seek、未做 faststart 的 MP4 读文件尾 moov 都依赖它
 func TestMediaServeRange(t *testing.T) {
 	stateDir = t.TempDir()

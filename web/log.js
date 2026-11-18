@@ -126,12 +126,15 @@ function logMatch(e) {
 const DIRN = { up: '上行', down: '下行', sys: '系统', err: '错误' };
 function logRow(e) {
   const d = document.createElement('div');
-  d.className = `le ${e.dir}${e.hex ? ' hasx' : ''}`;
+  d.className = `le ${esc(e.dir)}${e.hex ? ' hasx' : ''}`;
   const pkt = e.dir === 'up' || e.dir === 'down';
-  d.innerHTML = `<div class="row"><span class="ts">${fmtT(e.t)}</span><span class="dir">${DIRN[e.dir] || e.dir}</span>${pkt
-    ? `<span class="id">${e.msgId}</span><span class="nm">${esc(e.name)}</span><span class="sn">#${e.serial}</span><span class="sm">${esc(e.summary)}<em>${e.len} B</em></span>`
+  d.innerHTML = `<div class="row"${e.hex ? ' tabindex="0"' : ''}><span class="ts">${fmtT(e.t)}</span><span class="dir">${esc(DIRN[e.dir] || e.dir)}</span>${pkt
+    ? `<span class="id">${esc(e.msgId)}</span><span class="nm">${esc(e.name)}</span><span class="sn">#${esc(e.serial)}</span><span class="sm">${esc(e.summary)}<em>${esc(e.len)} B</em></span>`
     : `<span class="sm">${esc(e.summary)}</span>`}</div>`;
-  if (e.hex) d.firstChild.onclick = () => toggleDetail(d, e);
+  if (e.hex) {
+    d.firstChild.onclick = () => toggleDetail(d, e);
+    d.firstChild.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleDetail(d, e); } };
+  }
   return d;
 }
 function toggleDetail(d, e) {
@@ -183,7 +186,10 @@ onSwitch(() => { logs = []; lastSeq = 0; logEl.innerHTML = ''; $('#lCount').text
 $('#lDir').onclick = e => { const b = e.target.closest('[data-d]'); if (!b) return; logDir = b.dataset.d; $$('#lDir button').forEach(x => x.classList.toggle('on', x === b)); redrawLog(); };
 ['#lId', '#lText', '#lHb'].forEach(s => $(s).addEventListener('input', redrawLog));
 $('#lPause').onclick = e => { logPaused = !logPaused; e.target.textContent = logPaused ? '继续' : '暂停'; e.target.classList.toggle('on', logPaused); if (!logPaused) redrawLog(); };
-$('#lClear').onclick = () => { logs = []; logEl.innerHTML = ''; $('#lCount').textContent = ''; };
+$('#lClear').onclick = async () => {
+  if (logs.length && !(await confirmBox(`清空当前屏幕显示的 ${logs.length} 条日志？`))) return;
+  logs = []; logEl.innerHTML = ''; $('#lCount').textContent = '';
+};
 function setLogMax(on) {
   $('#logTile').classList.toggle('max', on);
   $('#lMax').textContent = on ? '还原' : '放大';
@@ -217,15 +223,20 @@ $('#lExport').onclick = () => openExport();
 $('#exCancel').onclick = () => { $('#exModal').hidden = true; };
 $('#exRange').onchange = () => { const c = $('#exRange').value === 'custom'; $('#exFromF').hidden = $('#exToF').hidden = !c; };
 $('#exSetSave').onclick = async e => {
-  const body = { enabled: $('#exDisk').checked, maxMB: +$('#exMax').value, days: +$('#exDays').value };
+  const maxMB = +$('#exMax').value, days = +$('#exDays').value;
+  if (!Number.isFinite(maxMB) || maxMB < 1 || !Number.isFinite(days) || days < 1) {
+    toast('落盘上限与保留天数须为大于 0 的数字'); return;
+  }
+  const body = { enabled: $('#exDisk').checked, maxMB, days };
   e.currentTarget.disabled = true;
   try {
-    const j = await (await fetch('api/logs/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    const j = await fetchJSON('api/logs/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!j.ok) toast(j.error || '保存失败'); else toast('落盘设置已保存', 'ok');
   } catch (err) { toast('请求失败：' + err.message); }
   finally { e.currentTarget.disabled = false; loadLogSettings(); }
 };
-$('#exGo').onclick = async () => {
+$('#exGo').onclick = async e => {
+  const btn = e.currentTarget;
   const q = new URLSearchParams({ term: $('#exTerm').value, format: $('#exFmt').value });
   const dirs = $$('#exDirs input:checked').map(i => i.value);
   if (!dirs.length) { toast('请至少选择一个方向'); return; }
@@ -239,6 +250,7 @@ $('#exGo').onclick = async () => {
   else if (r !== 'all') q.set('from', String(now - r * 60e3));
   const url = 'api/logs/export?' + q;
   // 先校验参数（错误时后端返回 JSON），再下载
+  btn.disabled = true;
   try {
     const h = await fetch(url, { method: 'GET', cache: 'no-store' });
     if (!h.ok) { const j = await h.json().catch(() => ({})); toast(j.error || '导出失败'); return; }
@@ -253,4 +265,5 @@ $('#exGo').onclick = async () => {
     }
     $('#exModal').hidden = true;
   } catch (err) { toast('导出失败：' + err.message); }
+  finally { btn.disabled = false; }
 };

@@ -501,12 +501,18 @@ func (h *ScenarioHub) Views(m *Manager) []ScenRunView {
 
 func (r *scenRun) finish(status, err string) {
 	r.mu.Lock()
-	if r.status == "running" {
-		r.status = status
+	already := !r.ended.IsZero()
+	if !already {
+		if r.status == "running" {
+			r.status = status
+		}
+		r.err = err
+		r.ended = time.Now()
 	}
-	r.err = err
-	r.ended = time.Now()
 	r.mu.Unlock()
+	if already {
+		return
+	}
 	close(r.done)
 	t := r.term
 	t.logf("场景「%s」结束：%s%s", r.sc.Name, map[string]string{"done": "完成", "stopped": "已停止", "error": "出错"}[r.view().Status],
@@ -514,6 +520,11 @@ func (r *scenRun) finish(status, err string) {
 }
 
 func (r *scenRun) run(m *Manager) {
+	defer func() {
+		if e := recover(); e != nil {
+			r.finish("error", fmt.Sprintf("内部异常: %v", e))
+		}
+	}()
 	t, sc := r.term, r.sc
 	t.logf("场景「%s」开始：%d 步", sc.Name, len(sc.Steps))
 	if len(sc.Config) > 0 {

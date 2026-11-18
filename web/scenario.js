@@ -93,7 +93,7 @@ function renderScRuns() {
       return `<li class="${c}"><b>${{ ok: '✓', bad: '✕', cur: '▶' }[c] || i + 1}</b><span>${esc(s)}</span></li>`;
     }).join('');
     const last = r.log.slice(-3).reverse().map(l => `<div>${l.t}s ${l.ok ? '✓' : '✕'} ${esc(l.text)}${l.error ? ' — ' + esc(l.error) : ''}</div>`).join('');
-    return `<div class="sc-run"><div class="sc-run-h"><b>${esc(r.name)}</b><span class="tag ${cls}">${st}</span>
+    return `<div class="sc-run"><div class="sc-run-h"><b>${esc(r.name)}</b><span class="tag ${esc(cls)}">${esc(st)}</span>
       <button class="lnk" data-term="${esc(r.terminal)}">终端 #${esc(r.terminal)} ${esc(r.phone)}</button><span class="grow"></span>
       <span class="muted mono">${Math.min(r.step, r.total)}/${r.total} 步 · ${dur(r.elapsed * 1000)}${r.failures ? ` · 失败 ${r.failures}` : ''}</span></div>
       <div class="fbar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div>
@@ -102,15 +102,19 @@ function renderScRuns() {
   }).join('') : '<div class="empty">还没有运行过场景</div>';
   $$('#scRuns .sc-steps li.cur').forEach(li => { const ol = li.parentElement; ol.scrollTop = li.offsetTop - ol.offsetTop - 60; });
 }
+let pollingScen = false;
 async function pollScen() {
+  if (document.hidden || pollingScen) return;
+  pollingScen = true;
   try {
     const first = !SCEN;
-    SCEN = await (await fetch('api/scenarios', { cache: 'no-store' })).json();
+    SCEN = await fetchJSON('api/scenarios', { cache: 'no-store' });
     if (first && !$('#scText').value) scSetText(scDraft || SCEN.example, '');
     renderScLib(); renderScRuns();
   } catch (_) { }
+  finally { pollingScen = false; }
 }
 let scTick = 0;
-setInterval(() => { if (page === 'scenario' || (SCEN && SCEN.runs.some(r => r.status === 'running')) || ++scTick % 5 === 0) pollScen(); }, 1000);
+setInterval(() => { if (!document.hidden && (page === 'scenario' || (SCEN && SCEN.runs.some(r => r.status === 'running')) || ++scTick % 5 === 0)) pollScen(); }, 1000);
 onPage('scenario', pollScen);
 pollScen();

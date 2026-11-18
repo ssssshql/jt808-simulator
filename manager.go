@@ -176,13 +176,8 @@ func (m *Manager) freePhone(base string) string {
 	if base == "" || strings.Trim(base, "0123456789") != "" {
 		base = "13800000001"
 	}
-	n, err := strconv.ParseUint(base, 10, 64)
-	if err != nil {
-		n = 13800000001
-	}
-	width := len(base)
 	for i := 1; i < 100000; i++ {
-		p := fmt.Sprintf("%0*d", width, n+uint64(i))
+		p := stressPhone(base, i)
 		if len(p) > 20 {
 			break
 		}
@@ -381,8 +376,19 @@ func (m *Manager) SaveAll() {
 }
 
 func (m *Manager) saveLoop() {
-	for range time.Tick(5 * time.Second) {
-		m.save()
+	m.saveLoopStop(nil)
+}
+
+func (m *Manager) saveLoopStop(stop <-chan struct{}) {
+	tk := time.NewTicker(5 * time.Second)
+	defer tk.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tk.C:
+			m.save()
+		}
 	}
 }
 
@@ -415,12 +421,16 @@ func (m *Manager) Briefs() []TermBrief {
 		t.mu.Unlock()
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		a, e1 := strconv.Atoi(out[i].ID)
-		b, e2 := strconv.Atoi(out[j].ID)
-		if e1 == nil && e2 == nil {
-			return a < b
-		}
-		return out[i].ID < out[j].ID
+		return compareTermID(out[i].ID, out[j].ID)
 	})
 	return out
+}
+
+func compareTermID(idA, idB string) bool {
+	a, e1 := strconv.Atoi(idA)
+	b, e2 := strconv.Atoi(idB)
+	if e1 == nil && e2 == nil {
+		return a < b
+	}
+	return idA < idB
 }

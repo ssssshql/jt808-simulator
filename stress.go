@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/big"
 	"math/rand"
 	"net"
 	"strconv"
@@ -94,13 +95,18 @@ func (c *StressConfig) normalize() error {
 	return nil
 }
 
-// stressPhone 起始手机号 + i（保持位数，前导零保留）
+// stressPhone 起始手机号 + i（支持 20 位超 uint64 号码，保持位数与前导零）
 func stressPhone(start string, i int) string {
-	n, err := strconv.ParseUint(start, 10, 64)
-	if err != nil {
+	var n big.Int
+	if _, ok := n.SetString(start, 10); !ok {
 		return start
 	}
-	return fmt.Sprintf("%0*d", len(start), n+uint64(i))
+	n.Add(&n, big.NewInt(int64(i)))
+	s := n.String()
+	if len(s) < len(start) {
+		s = strings.Repeat("0", len(start)-len(s)) + s
+	}
+	return s
 }
 
 // 应答延迟直方图分桶上限（毫秒）
@@ -154,11 +160,17 @@ func (s *Stress) Start(c StressConfig) error {
 		return err
 	}
 	s.mu.Lock()
+	if s.running {
+		s.mu.Unlock()
+		return fmt.Errorf("压力测试正在运行")
+	}
+	s.mu.Unlock()
+	s.wg.Wait() // 释放锁后再等待上一轮的虚拟终端全部退出，避免与 setErr 死锁
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.running {
 		return fmt.Errorf("压力测试正在运行")
 	}
-	s.wg.Wait() // 上一轮的虚拟终端已全部退出
 	s.cfg, s.running, s.stop, s.started, s.ended, s.lastErr = c, true, make(chan struct{}), time.Now(), time.Time{}, ""
 	s.series, s.cur, s.reason = nil, stressSample{}, ""
 	s.all, s.stride, s.tick, s.peakOn, s.peakConn, s.peakSent, s.peakRecv, s.onSum, s.onN = nil, 1, 0, 0, 0, 0, 0, 0, 0
@@ -616,7 +628,7 @@ func (v *vterm) onDown(m *Msg) {
 		}
 	default:
 		if m.ID >= 0x8000 { // 其它平台指令一律通用应答成功，避免平台侧堆积重传
-			go v.send(0x0001, cat(u16(m.Serial), u16(m.ID), []byte{0}), false)
+			v.send(0x0001, cat(u16(m.Serial), u16(m.ID), []byte{0}), false)
 		}
 	}
 }

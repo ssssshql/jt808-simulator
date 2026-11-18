@@ -12,8 +12,32 @@ function dur(ms) {
   return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
-let S = null;                 // 最近一次 /api/state
-// 多终端：当前选中的终端编号（每个浏览器各自记住），接口路径 api/t/<编号>/...
+// 记住页面上手工填写的操作参数（附件数量这类「上报时用的值」，不属于终端状态、不随后端刷新），
+// 重启模拟器或刷新页面后恢复上次输入；动态下拉尚未生成选项时先存 dataset.keepVal，由渲染函数兜底取用
+function keepFields(ids) {
+  const K = 'jt808.f.';
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const apply = v => {
+      if (el.type === 'checkbox') { el.checked = v === '1'; return true; }
+      if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === v)) return false;
+      el.value = v;
+      return true;
+    };
+    const v = localStorage.getItem(K + id);
+    if (v !== null && !apply(v)) el.dataset.keepVal = v;
+    const save = () => {
+      if (el.type === 'checkbox') localStorage.setItem(K + id, el.checked ? '1' : '0');
+      else if (el.value !== '') localStorage.setItem(K + id, el.value);
+    };
+    el.addEventListener('change', save);
+    el.addEventListener('input', save);
+  }
+}
+
+
+let S = null;                 // 最近一次 /api/state// 多终端：当前选中的终端编号（每个浏览器各自记住），接口路径 api/t/<编号>/...
 let TID = localStorage.getItem('jt808.term') || '';
 const api = p => (TID ? `api/t/${encodeURIComponent(TID)}/` : 'api/') + p;
 const switchHooks = [];       // 切换终端时调用（清空日志、重置地图视野等）
@@ -73,11 +97,20 @@ async function saveText(name, text, mime = 'text/plain;charset=utf-8') {
 }
 
 // ---------------- 后端 ----------------
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error) msg = j.error; } catch (_) { }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
 async function act(type, params = {}, btn, okMsg) {
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch(api('action'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, ...params }) });
-    const j = await r.json();
+    const j = await fetchJSON(api('action'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, ...params }) });
     if (!j.ok) { toast(j.error || '操作失败'); return false; }
     if (okMsg) toast(okMsg, 'ok');
     poll();
@@ -149,8 +182,24 @@ function go(p) {
   if (S) runHooks();
 }
 $('#nav').onclick = e => { const a = e.target.closest('a[data-page]'); if (a) go(a.dataset.page); };
+$('#nav').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const a = e.target.closest('a[data-page]');
+  if (a) { e.preventDefault(); go(a.dataset.page); }
+});
 $('#sheetClose').onclick = $('#mask').onclick = () => go('overview');
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#modal').hidden && page !== 'overview') go('overview'); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  for (const id of ['modal', 'exModal', 'updModal', 'repModal']) {
+    const el = document.getElementById(id);
+    if (el && !el.hidden) {
+      if (id === 'modal') $('#modalNo')?.click();
+      else el.hidden = true;
+      return;
+    }
+  }
+  if (page !== 'overview') go('overview');
+});
 window.addEventListener('hashchange', () => go(location.hash.slice(1)));
 
 // ---------------- 顶栏 ----------------
@@ -162,8 +211,13 @@ function renderTop(s) {
   $('#connText').textContent = ST[c.status] + (c.status === 'online' && c.onlineSince ? ' · ' + dur(Date.now() - c.onlineSince) : '') +
     (c.lastError && c.status !== 'online' ? ' · ' + c.lastError : '');
   pill.title = c.lastError || '';
-  $('#meta').innerHTML = [['手机号', c.phone || '未设置', 1], ['协议', 'JT/T 808-' + c.version], ['服务器', `${c.host}:${c.port}${c.transport === 'udp' ? ' /UDP' : ''}`, 1], ['车牌', s.device.plate || '-']]
-    .map(([n, v, m]) => `<span class="m"><span>${n}</span><b class="${m ? 'mono' : ''}">${esc(v)}</b></span>`).join('');
+  $('#meta').innerHTML = (() => {
+    const metaSig = `${c.phone}|${c.version}|${c.host}:${c.port}|${c.transport}|${s.device.plate}`;
+    if (renderTop.metaSig === metaSig) return $('#meta').innerHTML;
+    renderTop.metaSig = metaSig;
+    return [['手机号', c.phone || '未设置', 1], ['协议', 'JT/T 808-' + c.version], ['服务器', `${c.host}:${c.port}${c.transport === 'udp' ? ' /UDP' : ''}`, 1], ['车牌', s.device.plate || '-']]
+      .map(([n, v, m]) => `<span class="m"><span>${n}</span><b class="${m ? 'mono' : ''}">${esc(v)}</b></span>`).join('');
+  })();
   const on = c.status !== 'offline';
   $('#btnConnect').disabled = on;
   $('#btnDisconnect').disabled = !on;
@@ -194,12 +248,15 @@ function checkBuild(r) {
   if (sessionStorage.getItem('jt808.reloaded') !== b) { sessionStorage.setItem('jt808.reloaded', b); location.reload(); }
 }
 
+let pollingState = false;
 async function poll() {
-  if (document.hidden) return; // 窗口最小化/标签页隐藏时暂停轮询，可见时由 visibilitychange 立即补一次
+  if (document.hidden || pollingState) return; // 窗口最小化/标签页隐藏时暂停轮询，避免并发重入
+  pollingState = true;
   try {
     const want = TID, r = await fetch(api('state'), { cache: 'no-store' });
     checkBuild(r);
     if (r.status === 404) { TID = ''; return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     if (want !== TID) return;   // 轮询途中切换了终端，丢弃旧终端的结果
     S = j;
@@ -207,19 +264,23 @@ async function poll() {
   } catch (e) {
     $('#connPill').className = 'status st-connecting';
     $('#connText').textContent = '模拟器未响应';
+  } finally {
+    pollingState = false;
   }
 }
 setInterval(poll, 1000);
 // ---------------- 终端切换栏 ----------------
-let TERMS = [];
+let TERMS = [], loadingTerms = false;
 async function loadTerms() {
-  if (document.hidden) return;
+  if (document.hidden || loadingTerms) return;
+  loadingTerms = true;
   try {
-    const j = await (await fetch('api/terminals', { cache: 'no-store' })).json();
+    const j = await fetchJSON('api/terminals', { cache: 'no-store' });
     TERMS = j.terminals || [];
     if (!TERMS.some(t => t.id === TID)) setTerm(j.default, true);
     renderTerms(j.max);
   } catch (_) { }
+  finally { loadingTerms = false; }
 }
 function renderTerms(max) {
   const sig = JSON.stringify([TID, TERMS]);
@@ -245,7 +306,7 @@ $('#tchips').onclick = e => { const b = e.target.closest('[data-term]'); if (b) 
 async function termOp(op, extra = {}, btn) {
   if (btn) btn.disabled = true;
   try {
-    const j = await (await fetch('api/terminals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id: TID, ...extra }) })).json();
+    const j = await fetchJSON('api/terminals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id: TID, ...extra }) });
     if (!j.ok) { toast(j.error || '操作失败'); return null; }
     return j;
   } catch (e) { toast('请求失败：' + e.message); return null; }

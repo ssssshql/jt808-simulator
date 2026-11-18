@@ -105,10 +105,18 @@ func (t *Terminal) save() {
 	if err != nil {
 		return
 	}
-	os.MkdirAll(stateDir, 0o755)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.errf("创建状态目录失败: %v", err)
+		return
+	}
 	tmp := f + ".tmp"
-	if os.WriteFile(tmp, b, 0o644) == nil {
-		os.Rename(tmp, f)
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		t.errf("写入状态失败: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, f); err != nil {
+		t.errf("替换状态文件失败: %v", err)
+		return
 	}
 	t.dirty = false
 }

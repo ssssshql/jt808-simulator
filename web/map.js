@@ -113,10 +113,10 @@ function drawAreas(o, areas) {
     else if (a.kind === 2 && pts.length >= 2) layer = L.rectangle([pts[0], pts[1]], style);
     else if (a.kind === 3) layer = L.polygon(pts, style);
     else layer = L.polyline(pts, { color: col, weight: 5, opacity: .7, dashArray: '8 6' });
-    layer.bindPopup(`<b>${esc(AREA_KIND[a.kind])} ${a.id}</b><br>${esc(a.name || '未命名')}<br>属性 0x${hex4(a.attr)}${a.maxSpeed ? '<br>限速 ' + a.maxSpeed + ' km/h' : ''}`);
+    layer.bindPopup(`<b>${esc(AREA_KIND[a.kind])} ${esc(a.id)}</b><br>${esc(a.name || '未命名')}<br>属性 0x${hex4(a.attr)}${a.maxSpeed ? '<br>限速 ' + a.maxSpeed + ' km/h' : ''}`);
     layer.addTo(o.areas);
     if (a.kind === 4) pts.forEach((p, i) => L.circleMarker(p, { radius: 4, color: col, fillColor: '#fff', fillOpacity: 1, weight: 2 })
-      .bindTooltip(`拐点 ${i + 1}${a.segs && a.segs[i] ? ' · 路段 ' + a.segs[i].id : ''}`).addTo(o.areas));
+      .bindTooltip(`拐点 ${i + 1}${a.segs && a.segs[i] ? ' · 路段 ' + esc(a.segs[i].id) : ''}`).addTo(o.areas));
   });
   return true;
 }
@@ -142,7 +142,7 @@ async function loadRoute(o, rev) {
   o.route.setLatLngs([]); o.routeEnds.clearLayers();
   if (!rev) return;
   try {
-    const r = await (await fetch(api('route'), { cache: 'no-store' })).json();
+    const r = await fetchJSON(api('route'), { cache: 'no-store' });
     if (o.routeRev !== rev || !r.loaded) return;
     const pts = r.points.map(toMap);
     o.route.setLatLngs(pts);

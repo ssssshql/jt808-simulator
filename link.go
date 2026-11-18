@@ -6,12 +6,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 )
 
 type pend struct {
 	id, serial int
-	frame      []byte
+	frames     [][]byte
+	rawBody    []byte // 明文消息体（如 0200），供 RSA 场景下盲区补报使用
 	deadline   time.Time
 	tries      int
 	done       chan int // 平台通用应答结果
@@ -67,12 +69,18 @@ func (t *Terminal) writeFrame(f []byte) error {
 	t.mu.Lock()
 	c := t.conn
 	t.mu.Unlock()
+	return t.writeFrameOn(c, f)
+}
+
+func (t *Terminal) writeFrameOn(c net.Conn, f []byte) error {
 	if c == nil {
 		return errOffline
 	}
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
-	c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err := c.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
 	_, err := c.Write(f)
 	return err
 }
@@ -86,11 +94,13 @@ func (t *Terminal) send(id int, body []byte, summary string) (int, chan int, err
 // sendX replyID>0 时在分配流水号的同时登记专用应答等待（如 0100 -> 8100），避免应答先于登记到达
 func (t *Terminal) sendX(id int, body []byte, summary string, replyID int) (int, chan int, chan *Msg, error) {
 	t.mu.Lock()
-	if t.conn == nil {
+	c := t.conn
+	if c == nil {
 		t.mu.Unlock()
 		return 0, nil, nil, errOffline
 	}
 	ver, phone := t.Cfg.ver(), t.Cfg.Phone
+	rawBody := body
 	body, enc := t.encryptUp(id, body)
 	if enc {
 		summary = "[RSA] " + summary
@@ -114,17 +124,24 @@ func (t *Terminal) sendX(id int, body []byte, summary string, replyID int) (int,
 		t.waiters[waitKey(replyID, first)] = reply
 	}
 	var done chan int
-	if len(frames) == 1 && ackable(id) {
+	if ackable(id) {
 		done = make(chan int, 1)
-		t.pending[first] = &pend{id: id, serial: first, frame: frames[0], deadline: time.Now().Add(t.ackTimeout(0)), done: done}
+		var blindRaw []byte
+		if id == 0x0200 {
+			blindRaw = append([]byte(nil), rawBody...)
+		}
+		t.pending[first] = &pend{id: id, serial: first, frames: frames, rawBody: blindRaw, deadline: time.Now().Add(t.ackTimeout(0)), done: done}
 	}
 	t.counters.Up += len(frames)
 	t.lastUp = time.Now()
 	t.mu.Unlock()
 	for i, f := range frames {
-		if err := t.writeFrame(f); err != nil {
+		if err := t.writeFrameOn(c, f); err != nil {
 			t.dropPending(first)
-			return first, nil, reply, err
+			if replyID > 0 {
+				t.dropWaiter(replyID, first)
+			}
+			return first, nil, nil, err
 		}
 		if len(frames) > 1 && i > 0 && i < len(frames)-1 {
 			continue // 分包只记首尾两条日志
@@ -143,6 +160,15 @@ func waitKey(replyID, serial int) string { return fmt.Sprintf("%04X:%d", replyID
 func (t *Terminal) dropPending(serial int) {
 	t.mu.Lock()
 	delete(t.pending, serial)
+	t.mu.Unlock()
+}
+
+func (t *Terminal) dropWaiter(replyID, serial int) {
+	if replyID <= 0 {
+		return
+	}
+	t.mu.Lock()
+	delete(t.waiters, waitKey(replyID, serial))
 	t.mu.Unlock()
 }
 

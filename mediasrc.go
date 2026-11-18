@@ -402,25 +402,39 @@ func videoExt(mime string) string {
 // attachmentVideo 该通道视频附件内容与后缀：优先最近一段录制（当前播放画面），
 // 其次上传的源视频，最后内置 alarm.mp4（3 秒彩条测试片）
 func (t *Terminal) attachmentVideo(ch int) ([]byte, string) {
+	data, ext, _ := t.attachmentVideoDetail(ch)
+	return data, ext
+}
+
+// attachmentVideoDetail 同上，另返回来源（clip 录制 / source 上传的源视频 / builtin 内置彩条片），页面预览用
+func (t *Terminal) attachmentVideoDetail(ch int) ([]byte, string, string) {
 	t.mu.Lock()
 	src, id, clip := t.mediaSrcOf(ch), t.ID, t.clipOf(ch)
 	t.mu.Unlock()
 	if src == "video" || src == "camera" {
 		if len(clip.data) > 0 {
+			if age := time.Since(clip.at); age > 30*time.Second {
+				t.logf("[附件] 通道 %d 的录制片段已 %d 秒没更新（页面在后台 / 摄像头被关 / 录制失败），仍用这一段 %d KB",
+					ch, int(age.Seconds()), len(clip.data)>>10)
+			}
 			if strings.Contains(clip.mime, "mp4") {
-				return clip.data, ".mp4"
+				return clip.data, ".mp4", "clip"
 			}
 			if src == "camera" { // 摄像头没有源文件可退，只能回传录制的 WebM
-				return clip.data, videoExt(clip.mime)
+				return clip.data, videoExt(clip.mime), "clip"
 			}
 		}
 	}
 	if src == "video" {
 		if b := readMediaFile(id, ch, ".mp4"); b != nil {
-			return b, ".mp4"
+			return b, ".mp4", "source"
 		}
 	}
-	return alarmMP4, ".mp4"
+	if src == "video" || src == "camera" {
+		// 附件视频回退到内置彩条片时明确说明原因，便于区分「录制没起来」和「媒体源没设」
+		t.logf("[附件] 通道 %d 无可用录制片段（来源=%s，片段=%d 字节），视频附件用内置 alarm.mp4", ch, src, len(clip.data))
+	}
+	return alarmMP4, ".mp4", "builtin"
 }
 
 // mediaView 各通道媒体源状态（页面显示用）。调用方持有 t.mu（State 内调用）
@@ -569,6 +583,24 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
+	})
+	// 预览：该通道此刻会用于附件的视频（响应头 X-JT808-Source 标注是录制片段 / 源视频 / 内置彩条片）
+	handle("GET /videoclip", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
+		ch, ok := queryCh(r)
+		if !ok {
+			writeJSON(w, 400, map[string]any{"ok": false, "error": "通道号只能是 0（全部）或 64/65/66/67"})
+			return
+		}
+		data, ext, source := t.attachmentVideoDetail(ch)
+		ct := "video/mp4"
+		if ext == ".webm" {
+			ct = "video/webm"
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("X-JT808-Source", source)
+		w.Header().Set("X-JT808-Channel", strconv.Itoa(ch))
+		w.Write(data)
 	})
 	handle("POST /mediasrc/stamp", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		on := r.URL.Query().Get("on") != "0"

@@ -102,7 +102,11 @@ func readSearch(r *reader) (int, int, int, time.Time, time.Time) {
 }
 
 func (t *Terminal) h8802(m *Msg) {
-	typ, ch, evt, from, to := readSearch(newReader(m.Body))
+	r := newReader(m.Body)
+	typ, ch, evt, from, to := readSearch(r)
+	if r.err != nil {
+		return
+	}
 	t.mu.Lock()
 	list := t.searchMedia(typ, ch, evt, from, to)
 	t.mu.Unlock()
@@ -119,6 +123,10 @@ func (t *Terminal) h8803(m *Msg) {
 	r := newReader(m.Body)
 	typ, ch, evt, from, to := readSearch(r)
 	del := r.u8()
+	if r.err != nil {
+		t.ack(m, 2)
+		return
+	}
 	t.mu.Lock()
 	list := t.searchMedia(typ, ch, evt, from, to)
 	t.mu.Unlock()
@@ -136,6 +144,10 @@ func (t *Terminal) h8803(m *Msg) {
 func (t *Terminal) h8805(m *Msg) {
 	r := newReader(m.Body)
 	id, del := r.u32(), r.u8()
+	if r.err != nil {
+		t.ack(m, 2)
+		return
+	}
 	t.mu.Lock()
 	var found *MediaItem
 	for i := range t.Media {
@@ -172,6 +184,10 @@ func (t *Terminal) removeMedia(id int) {
 func (t *Terminal) h8804(m *Msg) {
 	r := newReader(m.Body)
 	cmd, sec, save := r.u8(), r.u16(), r.u8()
+	if r.err != nil {
+		t.ack(m, 2)
+		return
+	}
 	t.ack(m, 0)
 	if cmd == 0 {
 		return

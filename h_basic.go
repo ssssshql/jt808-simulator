@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,33 +30,41 @@ func init() {
 func (t *Terminal) h8103(m *Msg) {
 	r := newReader(m.Body)
 	n := r.u8()
-	var changed []string
-	t.mu.Lock()
+	type paramItem struct {
+		id  int
+		raw []byte
+	}
+	var items []paramItem
 	for i := 0; i < n && r.err == nil; i++ {
 		id := r.u32()
 		raw := r.take(r.u8())
 		if r.err != nil {
 			break
 		}
-		v := decodeParam(id, raw)
-		if t.Cfg.yue() {
-			if id == 0xF370 { // 粤标：只支持获取，不支持设置
-				changed = append(changed, "F370（只读，忽略）")
-				continue
-			}
-			if gdParamIndex[id] != nil && gdParamIndex[id].Schema != nil {
-				v = gdMerge(id, t.Params[id], raw) // 0xFF… 字段不修改
-			}
-		}
-		t.applyParam(id, v)
-		changed = append(changed, fmt.Sprintf("%04X=%s", id, v))
+		items = append(items, paramItem{id: id, raw: raw})
 	}
-	t.markDirty()
-	t.mu.Unlock()
 	if r.err != nil {
 		t.ack(m, 2)
 		return
 	}
+	var changed []string
+	t.mu.Lock()
+	for _, it := range items {
+		v := decodeParam(it.id, it.raw)
+		if t.Cfg.yue() {
+			if it.id == 0xF370 { // 粤标：只支持获取，不支持设置
+				changed = append(changed, "F370（只读，忽略）")
+				continue
+			}
+			if gdParamIndex[it.id] != nil && gdParamIndex[it.id].Schema != nil {
+				v = gdMerge(it.id, t.Params[it.id], it.raw) // 0xFF… 字段不修改
+			}
+		}
+		t.applyParam(it.id, v)
+		changed = append(changed, fmt.Sprintf("%04X=%s", it.id, v))
+	}
+	t.markDirty()
+	t.mu.Unlock()
 	t.addInbox("param", "设置参数", strings.Join(changed, "  "), 0, nil)
 	t.ack(m, 0)
 }
@@ -87,7 +96,7 @@ func (t *Terminal) h8104(m *Msg) {
 	t.mu.Lock()
 	n, items := t.Params.items(ids)
 	t.mu.Unlock()
-	t.send(0x0104, cat(u16(m.Serial), []byte{byte(n)}, items), fmt.Sprintf("参数 %d 项", n))
+	t.send(0x0104, cat(u16(m.Serial), []byte{byte(min(n, 255))}, items), fmt.Sprintf("参数 %d 项", n))
 }
 
 var ctrlNames = map[int]string{1: "无线升级", 2: "控制连接指定服务器", 3: "关机", 4: "复位", 5: "恢复出厂设置", 6: "关闭数据通信", 7: "关闭所有无线通信"}
@@ -124,27 +133,42 @@ func (t *Terminal) h8105(m *Msg) {
 		if get(0) == "1" {
 			t.hostOver, t.portOver = "", 0
 		} else if get(5) != "" {
-			t.hostOver = get(5)
-			fmt.Sscan(get(6), &t.portOver)
+			if p, err := strconv.Atoi(get(6)); err == nil && p > 0 && p <= 65535 {
+				t.hostOver = get(5)
+				t.portOver = p
+			} else {
+				t.errf("8105 控制连接端口非法: %q", get(6))
+			}
 			if get(1) != "" {
 				t.Cfg.Token = get(1)
 			}
 		}
 		t.mu.Unlock()
 		t.logf("控制连接：%s，1 秒后重连", map[bool]string{true: "切回原服务器", false: "切换到 " + get(5) + ":" + get(6)}[get(0) == "1"])
-		time.AfterFunc(time.Second, t.dropConn)
+		t.afterAlive(time.Second, t.dropConn)
 	case 3, 6, 7:
-		time.AfterFunc(time.Second, func() {
+		t.afterAlive(time.Second, func() {
 			t.mu.Lock()
 			t.powerOff = cmd == 3
 			t.mu.Unlock()
 			t.Stop(ctrlNames[cmd])
 		})
 	case 4:
-		time.AfterFunc(time.Second, func() { t.reboot(false) })
+		t.afterAlive(time.Second, func() { t.reboot(false) })
 	case 5:
-		time.AfterFunc(time.Second, func() { t.reboot(true) })
+		t.afterAlive(time.Second, func() { t.reboot(true) })
 	}
+}
+
+func (t *Terminal) afterAlive(d time.Duration, fn func()) {
+	time.AfterFunc(d, func() {
+		select {
+		case <-t.quit:
+			return
+		default:
+			fn()
+		}
+	})
 }
 
 // dropConn 断开当前连接，由会话循环按自动重连重新上线

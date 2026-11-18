@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,7 +48,7 @@ func (t *Terminal) h8107(m *Msg) {
 	if c.ver() >= V2019 {
 		did, model = 30, 30
 	}
-	iccid, _ := hex.DecodeString(fmt.Sprintf("%020s", c.ICCID)[:20])
+	iccid := bcd(c.ICCID, 10)
 	// 终端类型：bit1 适用危险品车辆 bit2 普通货运 bit6 支持硬盘录像 ；GNSS：GPS+北斗；通信：GPRS+TD-LTE
 	body := cat(u16(1<<1|1<<2|1<<6), fixed(c.Maker, 5), fixed(c.Model, model), fixed(c.DeviceID, did), iccid,
 		lstr(c.HwVer), lstr(c.FwVer), []byte{0x03, 0x01 | 1<<6})

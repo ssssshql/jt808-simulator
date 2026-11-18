@@ -254,8 +254,11 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 			s.Frames = n
 			t.mu.Unlock()
 		case <-at.C:
-			if s.paused.Load() || !s.audio.Load() || !sentVideo {
+			if s.paused.Load() || !s.audio.Load() || (s.video.Load() && !sentVideo) {
 				continue
+			}
+			if !s.video.Load() {
+				media = media.Add(time.Duration(40*max(int(s.speed.Load()), 1)) * time.Millisecond)
 			}
 			pcm := make([]byte, 320)
 			for i := range pcm {

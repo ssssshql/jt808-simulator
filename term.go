@@ -162,6 +162,7 @@ type Terminal struct {
 	lastErr    string
 	want       bool // 用户期望在线
 	sessStop   chan struct{}
+	sessDone   chan struct{}
 	serial     int
 	pending    map[int]*pend
 	waiters    map[string]chan *Msg

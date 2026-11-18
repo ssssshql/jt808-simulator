@@ -25,21 +25,40 @@ func (t *Terminal) bRegister() []byte {
 var regResult = map[byte]string{1: "车辆已被注册", 2: "数据库中无该车辆", 3: "终端已被注册", 4: "数据库中无该终端"}
 
 // register 0100 -> 8100，超时按 0x0002/0x0003（UDP：0x0004/0x0005）重传
-func (t *Terminal) register() error {
+func (t *Terminal) register(stop chan struct{}, readDone <-chan error) error {
 	t.mu.Lock()
 	tries := t.maxRetries()
+	phone := t.Cfg.Phone
 	var waits []time.Duration
 	for i := 0; i <= tries; i++ {
 		waits = append(waits, t.ackTimeout(i))
 	}
 	t.mu.Unlock()
+	first, _, reply, err := t.sendX(0x0100, t.bRegister(), "", 0x8100)
+	if err != nil {
+		return err
+	}
+	defer t.dropWaiter(0x8100, first)
+	t.mu.Lock()
+	ver := t.Cfg.ver()
+	c := t.conn
+	t.mu.Unlock()
+	frame := FrameEnc(0x0100, phone, first, t.bRegister(), ver, 0, 0, false)
 	for i := 0; i <= tries; i++ {
-		_, _, reply, err := t.sendX(0x0100, t.bRegister(), "", 0x8100)
-		if err != nil {
-			return err
+		if i > 0 {
+			if err := t.writeFrameOn(c, frame); err != nil {
+				return err
+			}
 		}
 		select {
-		case m := <-reply:
+		case <-stop:
+			return fmt.Errorf("注册被取消")
+		case err := <-readDone:
+			return fmt.Errorf("连接断开: %v", err)
+		case m, ok := <-reply:
+			if !ok || m == nil {
+				return fmt.Errorf("连接断开")
+			}
 			r := newReader(m.Body)
 			r.u16()
 			res := r.u8()
@@ -47,13 +66,14 @@ func (t *Terminal) register() error {
 				return fmt.Errorf("8100 格式错误")
 			}
 			if res != 0 {
-				return fmt.Errorf("注册失败: %d %s（检查平台车辆/终端档案与 phone=%s）", res, regResult[byte(res)], t.Cfg.Phone)
+				return fmt.Errorf("注册失败: %d %s（检查平台车辆/终端档案与 phone=%s）", res, regResult[byte(res)], phone)
 			}
 			t.mu.Lock()
 			t.Cfg.Token = ungbk(r.rest())
 			t.markDirty()
+			tok := t.Cfg.Token
 			t.mu.Unlock()
-			t.logf("注册成功，鉴权码=%s", t.Cfg.Token)
+			t.logf("注册成功，鉴权码=%s", tok)
 			return nil
 		case <-time.After(waits[i]):
 			if i < tries {
@@ -78,12 +98,12 @@ func (t *Terminal) auth() (int, error) {
 	return t.sendWait(0x0102, body, "鉴权码="+c.Token)
 }
 
-func (t *Terminal) login() error {
+func (t *Terminal) login(stop chan struct{}, readDone <-chan error) error {
 	t.mu.Lock()
 	tok := t.Cfg.Token
 	t.mu.Unlock()
 	if tok == "" {
-		if err := t.register(); err != nil {
+		if err := t.register(stop, readDone); err != nil {
 			return err
 		}
 	}
@@ -96,7 +116,7 @@ func (t *Terminal) login() error {
 		t.mu.Lock()
 		t.Cfg.Token = ""
 		t.mu.Unlock()
-		if err := t.register(); err != nil {
+		if err := t.register(stop, readDone); err != nil {
 			return err
 		}
 		if r, err = t.auth(); err != nil {
@@ -140,16 +160,22 @@ func (t *Terminal) linkTick(online bool) error {
 	}
 	for _, p := range resend {
 		t.logf("%04X serial=%d 应答超时，第 %d 次重传", p.id, p.serial, p.tries)
-		if err := t.writeFrame(p.frame); err != nil {
-			return err
+		for _, f := range p.frames {
+			if err := t.writeFrame(f); err != nil {
+				return err
+			}
 		}
 	}
 	for _, p := range lost {
 		close(p.done)
 		t.errf("%04X serial=%d 重传 %d 次仍无应答", p.id, p.serial, maxTry)
 		if p.id == 0x0200 {
-			if m := Parse(p.frame[1 : len(p.frame)-1]); m != nil {
-				t.storeBlind(m.Body)
+			if len(p.rawBody) > 0 {
+				t.storeBlind(p.rawBody)
+			} else if len(p.frames) > 0 {
+				if m := Parse(p.frames[0][1 : len(p.frames[0])-1]); m != nil {
+					t.storeBlind(m.Body)
+				}
 			}
 		}
 		if p.id == 0x0002 {
@@ -175,8 +201,13 @@ func (t *Terminal) storeBlind(body []byte) {
 }
 
 // flushBlind 上线后以 0704 类型 1（盲区补报）批量补传，每批最多 10 条，收到成功应答再删除
-func (t *Terminal) flushBlind() {
+func (t *Terminal) flushBlind(stop <-chan struct{}) {
 	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
 		t.mu.Lock()
 		n := min(len(t.Blind), 10)
 		batch := append([]string(nil), t.Blind[:n]...)
@@ -197,7 +228,11 @@ func (t *Terminal) flushBlind() {
 		t.Blind = t.Blind[min(n, len(t.Blind)):]
 		t.markDirty()
 		t.mu.Unlock()
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-stop:
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 }
 

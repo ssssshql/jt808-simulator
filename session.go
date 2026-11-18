@@ -19,7 +19,8 @@ func (t *Terminal) Start() {
 	}
 	t.want = true
 	t.sessStop = make(chan struct{})
-	go t.sessionLoop(t.sessStop)
+	t.sessDone = make(chan struct{})
+	go t.sessionLoop(t.sessStop, t.sessDone)
 }
 
 // Stop 主动下线（不发注销）
@@ -32,9 +33,13 @@ func (t *Terminal) Stop(reason string) {
 	t.want = false
 	close(t.sessStop)
 	c := t.conn
+	done := t.sessDone
 	t.mu.Unlock()
 	if c != nil {
 		c.Close()
+	}
+	if done != nil {
+		<-done
 	}
 	t.logf("终端下线：%s", reason)
 }
@@ -52,7 +57,8 @@ func (t *Terminal) setStatus(s, errMsg string) {
 	t.mu.Unlock()
 }
 
-func (t *Terminal) sessionLoop(stop chan struct{}) {
+func (t *Terminal) sessionLoop(stop, done chan struct{}) {
+	defer close(done)
 	fails := 0
 	for {
 		err := t.runOnce(stop, fails)
@@ -163,14 +169,16 @@ func (t *Terminal) runOnce(stop chan struct{}, fails int) error {
 			}
 		}
 	}()
-	err = t.login()
+	err = t.login(stop, readDone)
 	close(loginDone)
 	if err != nil {
 		t.setStatus("connecting", err.Error())
 		return err
 	}
 	t.setStatus("online", "")
-	go t.flushBlind()
+	blindStop := make(chan struct{})
+	defer close(blindStop)
+	go t.flushBlind(blindStop)
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -204,5 +212,9 @@ func (t *Terminal) failPending() {
 	for k, p := range t.pending {
 		close(p.done)
 		delete(t.pending, k)
+	}
+	for k, ch := range t.waiters {
+		close(ch)
+		delete(t.waiters, k)
 	}
 }

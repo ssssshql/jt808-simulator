@@ -271,12 +271,16 @@ func (t *Terminal) uploadOnce(host string, info *Info9208, files []AttFile, info
 	if err := a.send(0x1210, b1210(a.ver, did, info.Flag, info.AlarmNo, files, infoType), fmt.Sprintf("%d 个附件%s", len(files), map[int]string{1: " 补传"}[infoType])); err != nil {
 		return 0, err
 	}
-	a.wait(0x8001, 5*time.Second)
+	if err := a.waitAck("1210"); err != nil {
+		return 0, err
+	}
 	for i, f := range files {
 		if err := a.send(0x1211, b1211(f.Name, f.Type, len(f.Data)), f.Name); err != nil {
 			return i, err
 		}
-		a.wait(0x8001, 5*time.Second)
+		if err := a.waitAck("1211 " + f.Name); err != nil {
+			return i, err
+		}
 		if err := a.writeData(f.Name, f.Data, 0, len(f.Data)); err != nil {
 			return i, err
 		}
@@ -293,7 +297,10 @@ func (t *Terminal) uploadOnce(host string, info *Info9208, files []AttFile, info
 			r.lstr()
 			r.u8()
 			res, n := r.u8(), r.u8()
-			if res == 0 || r.err != nil {
+			if r.err != nil {
+				return i, fmt.Errorf("%s 9212 格式错误", f.Name)
+			}
+			if res == 0 {
 				t.logf("[附件] %s %d 字节 上传完成", f.Name, len(f.Data))
 				break
 			}
@@ -303,11 +310,26 @@ func (t *Terminal) uploadOnce(host string, info *Info9208, files []AttFile, info
 			for j := 0; j < n && r.err == nil; j++ {
 				off, ln := r.u32(), r.u32()
 				if off+ln <= len(f.Data) {
-					a.writeData(f.Name, f.Data, off, ln)
+					if err := a.writeData(f.Name, f.Data, off, ln); err != nil {
+						return i, err
+					}
 				}
 			}
 			t.logf("[附件] %s 按 9212 补传 %d 段", f.Name, n)
 		}
 	}
 	return len(files), nil
+}
+
+func (a *attConn) waitAck(step string) error {
+	m := a.wait(0x8001, 5*time.Second)
+	if m == nil {
+		return fmt.Errorf("%s 等待 8001 超时", step)
+	}
+	r := newReader(m.Body)
+	_, _, res := r.u16(), r.u16(), r.u8()
+	if r.err != nil || res != 0 {
+		return fmt.Errorf("%s 平台应答失败: result=%d", step, res)
+	}
+	return nil
 }
