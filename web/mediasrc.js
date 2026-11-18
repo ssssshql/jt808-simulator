@@ -203,7 +203,7 @@ async function msCamera(quiet) {
     const v = $('#msVideo');
     v.srcObject = stream;
     await v.play();
-    const j = await (await fetch(msUrl('mediasrc', 'kind=camera'), { method: 'POST' })).json();
+    const j = await fetchJSON(msUrl('mediasrc', 'kind=camera'), { method: 'POST' });
     if (!j.ok) { msStop(); return toast(j.error || '设置失败'); }
     await msListDevices();
     if (!quiet) toast(`${msChName()} 已开启摄像头，循环抓帧中`, 'ok');
@@ -290,8 +290,10 @@ $('#msKind').onclick = async e => {
   }
   // 恢复默认（只影响当前通道；全部通道时才是全局默认）
   msStop();
-  const j = await (await fetch(msUrl('mediasrc'), { method: 'DELETE' })).json();
-  if (j.ok) { toast(`${msChName()} 已恢复默认合成画面`, 'ok'); poll(); } else toast(j.error || '操作失败');
+  try {
+    const j = await fetchJSON(msUrl('mediasrc'), { method: 'DELETE' });
+    if (j.ok) { toast(`${msChName()} 已恢复默认合成画面`, 'ok'); poll(); } else toast(j.error || '操作失败');
+  } catch (err) { toast('操作失败：' + err.message); }
 };
 
 $('#msFile').onchange = async e => {
@@ -302,8 +304,7 @@ $('#msFile').onchange = async e => {
   const ext = (f.name.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
   const kind = msPending;
   try {
-    const r = await fetch(msUrl('mediasrc', 'kind=' + kind + '&ext=' + encodeURIComponent(ext)), { method: 'POST', body: f });
-    const j = await r.json();
+    const j = await fetchJSON(msUrl('mediasrc', 'kind=' + kind + '&ext=' + encodeURIComponent(ext)), { method: 'POST', body: f });
     if (!j.ok) return toast(j.error || '上传失败');
     msStop();
     msUpTick = Date.now();
@@ -320,7 +321,7 @@ $('#msCamOn').onclick = () => msCamera();
 $('#msStamp').onchange = async e => {
   const on = e.target.checked;
   try {
-    const j = await (await fetch(api('mediasrc/stamp') + '?on=' + (on ? 1 : 0), { method: 'POST' })).json();
+    const j = await fetchJSON(api('mediasrc/stamp') + '?on=' + (on ? 1 : 0), { method: 'POST' });
     if (!j.ok) return toast(j.error || '设置失败');
     toast(on ? '附件画面已烧入时间水印' : '已关闭时间水印', 'ok');
     poll();

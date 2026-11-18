@@ -60,9 +60,16 @@ function toast(msg, kind = 'err') {
 
 function confirmBox(text) {
   return new Promise(res => {
+    const prev = document.activeElement;
     $('#modalText').textContent = text;
     $('#modal').hidden = false;
-    const done = v => { $('#modal').hidden = true; $('#modalYes').onclick = $('#modalNo').onclick = null; res(v); };
+    $('#modalYes')?.focus();
+    const done = v => {
+      $('#modal').hidden = true;
+      $('#modalYes').onclick = $('#modalNo').onclick = null;
+      if (prev && typeof prev.focus === 'function') prev.focus();
+      res(v);
+    };
     $('#modalYes').onclick = () => done(true);
     $('#modalNo').onclick = () => done(false);
   });

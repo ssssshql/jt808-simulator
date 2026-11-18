@@ -85,6 +85,9 @@ function renderScRuns() {
   const t = TERMS.find(x => x.id === TID);
   $('#scTarget').textContent = t ? `未指定 terminal 时在当前终端 #${t.id} ${t.phone} 上运行` : '';
   $('#scStop').disabled = !running;
+  const sig = JSON.stringify(runs);
+  if (renderScRuns.sig === sig) return;
+  renderScRuns.sig = sig;
   $('#scRuns').innerHTML = runs.length ? runs.map(r => {
     const [st, cls] = SC_ST[r.status] || [r.status, ''];
     const failed = new Set(r.log.filter(l => !l.ok && l.step >= 0).map(l => l.step));

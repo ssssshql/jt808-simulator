@@ -32,13 +32,14 @@ function renderFleet() {
   const v = FLEET; if (!v) return;
   $('#navFleet').hidden = !v.alarming; $('#navFleet').textContent = v.alarming || '';
   if (page !== 'fleet') return;
-  $('#flKpis').innerHTML = [['在线 / 终端', `${v.online}<small>/ ${v.total}</small>`], ['报警中', `${v.alarming}<small>个终端</small>`],
+  const kpiHtml = [['在线 / 终端', `${v.online}<small>/ ${v.total}</small>`], ['报警中', `${v.alarming}<small>个终端</small>`],
     ['行驶中', `${v.terminals.filter(t => t.speed > 0.5).length}<small>个</small>`], ['场景运行', `${v.terminals.filter(t => t.scenario).length}<small>个</small>`]]
     .map(([a, b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('');
+  if (renderFleet.kpiSig !== kpiHtml) { renderFleet.kpiSig = kpiHtml; $('#flKpis').innerHTML = kpiHtml; }
   const q = $('#flFilter').value.trim().toLowerCase();
   const list = v.terminals.filter(t => (!q || [t.id, t.phone, t.plate].some(x => String(x).toLowerCase().includes(q))) &&
     (!flStatus || (flStatus === 'alarm' ? t.alarms.length : flStatus === 'offline' ? t.status !== 'online' : t.status === flStatus)));
-  $('#flBody').innerHTML = list.length ? list.map(t => `<tr data-term="${esc(t.id)}" tabindex="0" class="${t.id === TID ? 'on' : ''}">
+  const bodyHtml = list.length ? list.map(t => `<tr data-term="${esc(t.id)}" tabindex="0" class="${t.id === TID ? 'on' : ''}">
     <td class="mono">#${esc(t.id)}${t.default ? ' <span class="tag">默认</span>' : ''}</td>
     <td><span class="fl-st ${esc(t.status)}" title="${esc(t.lastError || '')}"><i></i>${esc(ST[t.status] || t.status)}${t.status === 'online' && t.onlineSince ? ' · ' + dur(Date.now() - t.onlineSince) : ''}</span>${t.scenario ? ` <span class="tag info" title="场景">${esc(t.scenario)}</span>` : ''}</td>
     <td class="mono">${esc(t.phone)}</td><td>${esc(t.plate)}</td>
@@ -49,6 +50,7 @@ function renderFleet() {
     <td class="r mono">${t.up} / ${t.down}</td>
     <td class="mono muted">${esc(t.host)}:${t.port}${t.transport === 'udp' ? '/UDP' : ''} · ${esc(t.version)}</td></tr>`).join('')
     : '<tr><td colspan="10" class="empty">没有符合条件的终端</td></tr>';
+  if (renderFleet.bodySig !== bodyHtml) { renderFleet.bodySig = bodyHtml; $('#flBody').innerHTML = bodyHtml; }
   // 地图
   const o = fleetMap(), seen = new Set();
   v.terminals.forEach(t => {

@@ -82,9 +82,13 @@ function renderOverview(s) {
 
   $$('#replySeg button').forEach(b => b.classList.toggle('x', b.dataset.r === s.reply.mode));
   setVal('replyDelay', s.reply.delay);
-  $('#replyKV').innerHTML = [['待确认 / 重传', `${k.pendingAcks} / ${k.retrans}`], ['盲区缓存', k.blindQueue + ' 条'], ['重连次数', c.reconnects],
-    ['RSA', s.rsa.platKey ? (s.rsa.upEncrypt ? '上行加密' : '已获平台公钥') : '未启用'], ['鉴权码', c.token || '无']]
-    .map(([a, v]) => `<div><span>${a}</span><b class="mono">${esc(v)}</b></div>`).join('');
+  const rk = [['待确认 / 重传', `${k.pendingAcks} / ${k.retrans}`], ['盲区缓存', k.blindQueue + ' 条'], ['重连次数', c.reconnects],
+    ['RSA', s.rsa.platKey ? (s.rsa.upEncrypt ? '上行加密' : '已获平台公钥') : '未启用'], ['鉴权码', c.token || '无']];
+  const rkSig = JSON.stringify(rk);
+  if (rkSig !== renderOverview.rkSig) {
+    renderOverview.rkSig = rkSig;
+    $('#replyKV').innerHTML = rk.map(([a, v]) => `<div><span>${a}</span><b class="mono">${esc(v)}</b></div>`).join('');
+  }
 
   $('#inboxN').textContent = s.inbox.length ? s.inbox.length + ' 条' : '';
   const sig = JSON.stringify(s.inbox.slice(0, 60));
@@ -475,6 +479,16 @@ function validateCfg() {
     const el = $('#c_' + k), err = check && check(String(c[k] ?? ''), c);
     el.classList.toggle('invalid', !!err);
     el.title = err || '';
+    const box = el.closest('.field');
+    if (box) {
+      let msg = box.querySelector('.field-err');
+      if (err) {
+        if (!msg) { msg = document.createElement('small'); msg.className = 'field-err'; box.appendChild(msg); }
+        msg.textContent = err;
+      } else if (msg) {
+        msg.remove();
+      }
+    }
     if (err) ok = false;
   });
   return ok;

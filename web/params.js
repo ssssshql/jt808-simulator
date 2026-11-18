@@ -6,6 +6,7 @@ const pDirty = new Map(); // id -> {value} | {fields}
 let pSig = '';
 
 async function reloadParams() {
+  if (!P && $('#pList')) $('#pList').innerHTML = '<div class="card empty">正在读取参数…</div>';
   try {
     P = await fetchJSON(api('params'));
     pDirty.clear();

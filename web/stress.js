@@ -72,15 +72,18 @@ function renderStress(v) {
   ST_FIELDS.forEach(([k]) => $('#st_' + k).disabled = on);
   if (on) ST_FIELDS.forEach(([k]) => { if (v.config[k] !== undefined) $('#st_' + k).value = v.config[k]; });
   const target = v.config.count || 0;
-  $('#stKpis').innerHTML = [['在线 / 目标', `${stNum(s.online)}<small>/ ${stNum(target)}</small>`], ['发送', `${stNum(s.sentRate)}<small>条/秒</small>`],
+  const kpiHtml = [['在线 / 目标', `${stNum(s.online)}<small>/ ${stNum(target)}</small>`], ['发送', `${stNum(s.sentRate)}<small>条/秒</small>`],
     ['接收', `${stNum(s.recvRate)}<small>条/秒</small>`], ['应答延迟 P95', `${s.latP95 || 0}<small>ms</small>`]]
     .map(([a, b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('');
-  $('#stChart').innerHTML = stChart(v.series || []);
+  if (renderStress.kpiSig !== kpiHtml) { renderStress.kpiSig = kpiHtml; $('#stKpis').innerHTML = kpiHtml; }
+  const chartHtml = stChart(v.series || []);
+  if (renderStress.chartSig !== chartHtml) { renderStress.chartSig = chartHtml; $('#stChart').innerHTML = chartHtml; }
   $('#stElapsed').textContent = v.elapsed ? '运行 ' + dur(v.elapsed * 1000) : '';
-  $('#stKV').innerHTML = [['已启动', s.spawned], ['已连接', s.connected], ['注册成功', s.regOK], ['注册失败', s.regFail],
+  const kvHtml = [['已启动', s.spawned], ['已连接', s.connected], ['注册成功', s.regOK], ['注册失败', s.regFail],
     ['鉴权失败', s.authFail], ['连接失败', s.connFail], ['累计发送', s.sent], ['累计接收', s.recv], ['应答成功', s.acks], ['应答失败', s.nacks],
     ['应答超时', s.timeouts], ['重连', s.reconnects], ['发送错误', s.sendErrors], ['延迟 平均', s.latAvg + ' ms'], ['延迟 P50', s.latP50 + ' ms'], ['延迟 P99', s.latP99 + ' ms']]
     .map(([a, b]) => `<dt>${a}</dt><dd class="mono">${typeof b === 'number' ? stNum(b) : esc(b)}</dd>`).join('');
+  if (renderStress.kvSig !== kvHtml) { renderStress.kvSig = kvHtml; $('#stKV').innerHTML = kvHtml; }
   $('#stErr').hidden = !v.lastError; $('#stErr').textContent = v.lastError ? '最近错误：' + v.lastError : '';
 }
 let pollingStress = false;

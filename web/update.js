@@ -18,7 +18,7 @@
 
   async function check(manual) {
     try {
-      const j = await (await fetch('api/update' + (manual ? '?force=1' : ''), { cache: 'no-store' })).json();
+      const j = await fetchJSON('api/update' + (manual ? '?force=1' : ''), { cache: 'no-store' });
       if (!j.ok) {
         lastErr = j.error || '检查失败';
         note(`上次检查更新失败：${lastErr}（点击版本号重试）`);
@@ -60,7 +60,7 @@
   async function openPage() {
     const url = info?.url || 'https://github.com/ssssshql/jt808-simulator/releases/latest';
     try {
-      const j = await (await fetch('api/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })).json();
+      const j = await fetchJSON('api/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
       if (!j.ok) window.open(url, '_blank');
     } catch (_) { window.open(url, '_blank'); }
   }
@@ -70,12 +70,12 @@
     $('#updProg').hidden = false;
     $('#updProgText').textContent = '准备下载…';
     try {
-      const j = await (await fetch('api/update/install', { method: 'POST' })).json();
+      const j = await fetchJSON('api/update/install', { method: 'POST' });
       if (!j.ok) { toast(j.error); setBusy(false); return; }
     } catch (e) { toast('更新失败：' + e.message); setBusy(false); return; }
     clearInterval(polling);
     polling = setInterval(async () => {
-      let p; try { p = await (await fetch('api/update/progress', { cache: 'no-store' })).json(); } catch (_) { return; }
+      let p; try { p = await fetchJSON('api/update/progress', { cache: 'no-store' }); } catch (_) { return; }
       const pct = p.total ? Math.min(100, p.done / p.total * 100) : 0;
       $('#updBar').style.width = (p.state === 'downloading' ? pct : 100) + '%';
       $('#updProgText').textContent = {
