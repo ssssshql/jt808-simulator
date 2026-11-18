@@ -298,16 +298,18 @@ func (t *Terminal) gdAttachFiles(a adasAlarm, total int, no string, rec []byte) 
 	}
 	var files []AttFile
 	mch := mediaChOf(a.attr) // 媒体按报警类型分通道（TPMS 文件名通道号填 0，但媒体源仍按 66 取）
-	// 同一次上报的图片共用同一画面（含烧入的时间水印），循环外取一次
-	cur := t.attachmentImage(mch)
-	if cur == nil {
-		cur = t.stampIf(makeJPEG(max(ch, 1), 5, 3, time.Now()), mch)
-	}
 	for i := 0; i < nImg; i++ {
-		files = append(files, AttFile{fmt.Sprintf("%02d_%d_%s_%d_%s.jpg", imgType, ch, code, i, no), imgType, cur})
+		back := time.Duration(nImg-1-i) * attachShotGap // 图片按序号往前错开，水印时间递减
+		img := t.attachmentImageAt(mch, back)
+		if img == nil {
+			at := time.Now().Add(-back)
+			img = t.stampIfAt(makeJPEG(max(ch, 1), 5, 3, at), mch, at)
+		}
+		files = append(files, AttFile{fmt.Sprintf("%02d_%d_%s_%d_%s.jpg", imgType, ch, code, i, no), imgType, img})
 	}
 	if video {
-		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_0_%s.mp4", ch, code, no), 2, t.attachmentVideo(mch)})
+		data, ext := t.attachmentVideo(mch)
+		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_0_%s%s", ch, code, no, ext), 2, data})
 	}
 	if bin {
 		files = append(files, AttFile{fmt.Sprintf("03_0_%s_0_%s.bin", code, no), 3, rec})

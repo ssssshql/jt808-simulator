@@ -17,7 +17,7 @@ func TestMediaSource(t *testing.T) {
 	if term.currentImage(0) != nil {
 		t.Fatal("默认应回退合成图")
 	}
-	if !bytes.Equal(term.attachmentVideo(0), alarmMP4) {
+	if d, ext := term.attachmentVideo(0); !bytes.Equal(d, alarmMP4) || ext != ".mp4" {
 		t.Fatal("默认视频应为内置 alarm.mp4")
 	}
 
@@ -40,7 +40,7 @@ func TestMediaSource(t *testing.T) {
 	if err := term.setMediaSource(0, "video", ".mp4", video); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(term.attachmentVideo(0), video) {
+	if d, ext := term.attachmentVideo(0); !bytes.Equal(d, video) || ext != ".mp4" {
 		t.Fatal("视频附件应使用上传的源视频")
 	}
 	if err := term.setMediaSource(0, "video", ".webm", video); err == nil {
@@ -59,9 +59,7 @@ func TestMediaSource(t *testing.T) {
 		t.Fatal("应优先使用最新抓帧")
 	}
 	term.mu.Lock()
-	fb := term.frames[chKey(0)]
-	fb.at = time.Now().Add(-61 * time.Second) // 很久没有新帧
-	term.frames[chKey(0)] = fb
+	term.frames[chKey(0)] = []frameBuf{{frame, time.Now().Add(-61 * time.Second)}} // 很久没有新帧
 	mv := term.mediaView()
 	term.mu.Unlock()
 	if !bytes.Equal(term.currentImage(0), frame) {
@@ -71,16 +69,16 @@ func TestMediaSource(t *testing.T) {
 		t.Fatal("超过 30 秒无新帧应标记 stale（页面提示用）")
 	}
 
-	// 附件列表：图片用当前画面，视频用源视频
+	// 附件列表：图片取该通道画面，视频取源视频（后缀按实际内容）
 	files := term.attachFiles(adasAlarm{0x64, 1, 1}, 2, "NO1")
 	if len(files) != 2 || files[0].Type != 0 || files[1].Type != 2 {
 		t.Fatalf("附件结构不对: %+v", files)
 	}
-	if !bytes.Equal(files[0].Data, frame) || !bytes.Equal(files[1].Data, video) {
-		t.Fatal("附件内容应来自媒体源")
+	if !bytes.Equal(files[0].Data, frame) {
+		t.Fatal("图片附件应来自媒体源")
 	}
-	if !bytes.Equal(files[0].Data, term.attachFiles(adasAlarm{0x64, 1, 1}, 3, "NO2")[0].Data) {
-		t.Fatal("同一次上报的图片附件应取同一画面")
+	if !bytes.HasSuffix([]byte(files[1].Name), []byte(".mp4")) || !bytes.Equal(files[1].Data, video) {
+		t.Fatalf("视频附件应来自媒体源并命名 .mp4: %s", files[1].Name)
 	}
 
 	// 切换媒体源要作废旧帧，否则新附件仍会用上一个源（视频/摄像头）的画面
@@ -93,8 +91,106 @@ func TestMediaSource(t *testing.T) {
 
 	// 清除后回退默认
 	term.clearMediaSource(0)
-	if term.currentImage(0) != nil || !bytes.Equal(term.attachmentVideo(0), alarmMP4) {
+	if term.currentImage(0) != nil {
 		t.Fatal("清除后应回退默认合成画面")
+	}
+	if d, _ := term.attachmentVideo(0); !bytes.Equal(d, alarmMP4) {
+		t.Fatal("清除后视频应回退内置 alarm.mp4")
+	}
+}
+
+// 多张图片按序号取不同时刻的画面：水印时间递减，内容不再三张一模一样
+func TestAttachShotSequence(t *testing.T) {
+	stateDir = t.TempDir()
+	term := NewTerminal(Config{Phone: "13800000000"})
+	term.setCamera(64, true)
+	// 4 帧真实 JPEG（时间 6/4/2/0 秒前）：setFrame 总是插到最前，所以倒序推入
+	src := make([][]byte, 4)
+	for i := 0; i < 4; i++ {
+		src[3-i] = makeJPEG(64, 1, 3, time.Now().Add(-time.Duration((3-i)*2)*time.Second))
+		if err := term.setFrame(64, src[3-i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	term.mu.Lock()
+	for i := range term.frames[chKey(64)] { // frames 最新在前：0 秒前、2 秒前、4 秒前、6 秒前
+		term.frames[chKey(64)][i].at = now.Add(-time.Duration(i*2) * time.Second)
+	}
+	term.Cfg.NoStamp = true // 关闭水印按字节核对取到的是哪一帧
+	term.mu.Unlock()
+
+	files := term.attachFiles(adasAlarm{0x64, 1, 1}, 4, "NO1") // 3 张图 + 1 个视频
+	if len(files) != 4 {
+		t.Fatalf("应为 3 图 + 1 视频，得到 %d 个: %+v", len(files), files)
+	}
+	// 第 0 张取 4 秒前（src[2]）、第 1 张 2 秒前（src[1]）、第 2 张当前（src[0]）
+	for i, want := range [][]byte{src[2], src[1], src[0]} {
+		if !bytes.Equal(files[i].Data, want) {
+			t.Fatalf("第 %d 张图片应取 %d 秒前的画面", i, (2-i)*2)
+		}
+	}
+	if bytes.Equal(files[0].Data, files[2].Data) {
+		t.Fatal("多张图片不应是同一画面")
+	}
+
+	// 水印时间随画面时刻递减：同一帧在 4 秒前与当前烧入的水印不同
+	term.mu.Lock()
+	term.Cfg.NoStamp = false
+	term.mu.Unlock()
+	oldImg := term.attachmentImageAt(64, 4*time.Second)
+	newImg := term.attachmentImageAt(64, 0)
+	if bytes.Equal(oldImg, newImg) {
+		t.Fatal("不同时刻的画面应烧入不同时间的水印")
+	}
+}
+
+// 视频附件：摄像头/视频模式优先用最近一段录制，格式按实际 mime 决定后缀
+func TestVideoClip(t *testing.T) {
+	stateDir = t.TempDir()
+	term := NewTerminal(Config{Phone: "13800000000"})
+	term.setCamera(64, true)
+
+	clip := append([]byte("\x00\x00\x00\x18ftypmp42"), bytes.Repeat([]byte("x"), 200)...)
+	if err := term.setClip(64, "video/mp4", clip); err != nil {
+		t.Fatal(err)
+	}
+	if d, ext := term.attachmentVideo(64); !bytes.Equal(d, clip) || ext != ".mp4" {
+		t.Fatalf("摄像头 + MP4 片段应作为视频附件: ext=%s len=%d", ext, len(d))
+	}
+	files := term.attachFiles(adasAlarm{0x64, 1, 1}, 2, "NO1")
+	if !bytes.Equal(files[1].Data, clip) || !bytes.HasSuffix([]byte(files[1].Name), []byte(".mp4")) {
+		t.Fatalf("附件里的视频应是录制片段: %s", files[1].Name)
+	}
+
+	// 浏览器只支持 WebM：摄像头没有源视频可退，如实按 .webm 命名
+	if err := term.setClip(64, "video/webm", clip); err != nil {
+		t.Fatal(err)
+	}
+	if _, ext := term.attachmentVideo(64); ext != ".webm" {
+		t.Fatalf("WebM 片段应为 .webm，得到 %s", ext)
+	}
+	if !bytes.HasSuffix([]byte(term.attachFiles(adasAlarm{0x64, 1, 1}, 2, "NO2")[1].Name), []byte(".webm")) {
+		t.Fatal("附件名应跟随实际视频格式")
+	}
+
+	// 视频文件源：WebM 片段不用，回退上传的 MP4 源文件
+	if err := term.setMediaSource(64, "video", ".mp4", append([]byte("....ftyp"), bytes.Repeat([]byte("y"), 40)...)); err != nil {
+		t.Fatal(err)
+	}
+	if d, ext := term.attachmentVideo(64); ext != ".mp4" || bytes.Equal(d, clip) {
+		t.Fatalf("视频源应回退上传的 MP4: ext=%s", ext)
+	}
+
+	// 换源作废片段
+	term.clearMediaSource(64)
+	if d, _ := term.attachmentVideo(64); !bytes.Equal(d, alarmMP4) {
+		t.Fatal("清源后应回退内置 alarm.mp4")
+	}
+
+	// 非视频 mime 拒绝
+	if err := term.setClip(64, "text/plain", bytes.Repeat([]byte("z"), 200)); err == nil {
+		t.Fatal("非视频片段应被拒绝")
 	}
 }
 
@@ -138,7 +234,7 @@ func TestMediaChannel(t *testing.T) {
 	}
 
 	// 视频附件同样按通道取
-	if !bytes.Equal(term.attachmentVideo(65), alarmMP4) {
+	if d, _ := term.attachmentVideo(65); !bytes.Equal(d, alarmMP4) {
 		t.Fatal("通道 65 未设视频，应用内置 alarm.mp4")
 	}
 

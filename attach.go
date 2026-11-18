@@ -98,28 +98,45 @@ func (t *Terminal) raiseADAS(kind string, typ, level, files, flag int) error {
 }
 
 // attachFiles 按 JSATL12 命名：文件类型_通道_报警类型_序号_报警编号.后缀
-// 图片取该通道媒体源的当前画面（视频/摄像头抓帧或上传的图片），视频优先用该通道上传的源视频
+// 图片取该通道媒体源的历史画面（按序号往前错开 attachShotGap，水印时间因此递减），视频优先用最近一段录制
 func (t *Terminal) attachFiles(a adasAlarm, total int, no string) []AttFile {
 	ch := map[int]int{0x64: 64, 0x65: 65, 0x66: 66, 0x67: 67}[a.attr]
 	code := fmt.Sprintf("%02X%02X", a.attr, a.typ)
 	mch := mediaChOf(a.attr)
-	var files []AttFile
-	// 同一次上报的图片共用同一画面（含烧入的时间水印），循环外取一次：图片模式避免重复读盘，抓帧模式避免每张图各解一次码
-	cur := t.attachmentImage(mch)
-	if cur == nil {
-		cur = t.stampIf(makeJPEG(ch, 2, 3, time.Now()), mch)
+	nImg := total
+	if total > 1 {
+		nImg = total - 1
 	}
-	for i := 0; i < total; i++ {
-		if i == total-1 && total > 1 {
-			files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s.mp4", ch, code, i, no), 2, t.attachmentVideo(mch)})
-		} else {
-			files = append(files, AttFile{fmt.Sprintf("00_%d_%s_%d_%s.jpg", ch, code, i, no), 0, cur})
+	var files []AttFile
+	for i := 0; i < nImg; i++ {
+		back := time.Duration(nImg-1-i) * attachShotGap // 第 0 张最早，最后一张是当前画面
+		img := t.attachmentImageAt(mch, back)
+		if img == nil {
+			at := time.Now().Add(-back)
+			img = t.stampIfAt(makeJPEG(ch, 2, 3, at), mch, at)
 		}
+		files = append(files, AttFile{fmt.Sprintf("00_%d_%s_%d_%s.jpg", ch, code, i, no), 0, img})
+	}
+	if total > 1 {
+		data, ext := t.attachmentVideo(mch)
+		files = append(files, AttFile{fmt.Sprintf("02_%d_%s_%d_%s%s", ch, code, nImg, no, ext), 2, data})
 	}
 	return files
 }
 
 func init() { handlers[0x9208] = (*Terminal).h9208 }
+
+// attNames 附件清单摘要（文件类型:文件名(大小)），用于日志核对平台侧展示的媒体资源数
+func attNames(files []AttFile) string {
+	var sb strings.Builder
+	for i, f := range files {
+		if i > 0 {
+			sb.WriteString("; ")
+		}
+		fmt.Fprintf(&sb, "%d:%s(%dKB)", f.Type, f.Name, len(f.Data)>>10)
+	}
+	return sb.String()
+}
 
 func (t *Terminal) h9208(m *Msg) {
 	info, err := parse9208(m.Version, m.Body)
@@ -153,6 +170,8 @@ func (t *Terminal) h9208(m *Msg) {
 	if yue {
 		files = t.gdAttachFiles(a, max(info.FileTotal, 1), no, rec)
 	}
+	t.logf("[附件] 9208 要求 %d 个文件（报警里的附件数量字段与此独立，平台可自行决定要几个），实际上传 %d 个: %s",
+		info.FileTotal, len(files), attNames(files))
 	if err := t.uploadAttachments(host, info, files); err != nil {
 		t.errf("附件上传失败: %v", err)
 	}

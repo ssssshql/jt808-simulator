@@ -1,7 +1,9 @@
 // 媒体源：图片 / 视频文件 / 电脑摄像头作为报警附件的画面来源，按通道独立设置
 // （64 ADAS / 65 DSM / 66 TPMS / 67 BSD，0 = 全部通道；通道未设置时继承「全部通道」）。
-// 视频与摄像头在前端循环播放，每秒 canvas 抓一帧 JPEG 回传后端（POST frame?ch=），
-// 平台 9208 触发附件上传时，后端取该通道最新一帧作为图片附件；视频附件用该通道上传的源视频。
+// 视频与摄像头在前端循环播放，每秒 canvas 抓一帧 JPEG 回传后端（POST frame，按通道留最近 30 帧）；
+// 同时 MediaRecorder 每约 6 秒录一段回传（POST videoclip），后端只留最近一段。
+// 平台 9208 触发附件上传时，后端按通道从帧历史取不同时刻的画面做图片附件（水印时间递减），
+// 视频附件用最近一段录制，没有录制则用该通道上传的源视频，最后回退内置 alarm.mp4。
 'use strict';
 
 let msCh = '0';           // 当前设置的通道：'0' = 全部通道
@@ -11,16 +13,30 @@ let msPending = '';       // 文件选择器等待的类型（image/video）
 let msUpTick = 0;         // 上传时间戳：变化时刷新预览地址
 let msLoaded = '';        // 已加载预览的签名（避免轮询时重置播放）
 let msDevId = '';         // 选中的摄像头设备
+let msRec = null;         // 当前 MediaRecorder
+let msRecWant = false;    // 是否应持续录制（视频/摄像头源）
+let msRecFail = 0;        // 连续录不出数据的段数
+let msRecDead = false;    // 录制已放弃（换源后重置）
+let msCapStream = null;   // <video> captureStream 得到的流（复用，避免重复创建）
+let msCapFor = '';        // 上面的流对应的媒体地址
 const msCamTried = new Set(); // 本次页面加载已自动尝试开启摄像头的通道（避免每次轮询重试）
 const msCanvas = document.createElement('canvas');
 const MS_NAME = { '': '默认合成图', image: '图片文件', video: '视频文件', camera: '电脑摄像头' };
 const MS_SRC = { frame: '当前播放画面（抓帧）', image: '上传的图片文件', synthetic: '合成彩条测试图' };
+// 录制：每段 6 个 1 秒分片 ≈ 6 秒，停下后立刻回传并重开，后端只留最近一段做视频附件。
+// MP4 优先（协议附件惯例是 .mp4），不支持时退 WebM（Chrome/WebView2 早期版本），后端会按 .webm 命名
+const MS_REC_CHUNKS = 6;
+const MS_REC_CANDS = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm'];
+const MS_REC_MIME = (typeof MediaRecorder === 'undefined') ? ''
+  : (MS_REC_CANDS.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch (_) { return false; } }) || '');
 
 const msChName = () => (msCh === '0' ? '全部通道' : '通道 ' + msCh);
 // 媒体源接口统一带通道参数
 const msUrl = (p, extra) => api(p) + '?ch=' + msCh + (extra ? '&' + extra : '');
 
 function msStop() {
+  msRecStop();
+  if (msCapStream) { msCapStream.getTracks().forEach(t => t.stop()); msCapStream = null; msCapFor = ''; }
   if (msStream) { msStream.getTracks().forEach(t => t.stop()); msStream = null; }
   if (msTimer) { clearInterval(msTimer); msTimer = null; }
   const v = $('#msVideo');
@@ -30,7 +46,64 @@ function msStop() {
   msLoaded = '';
 }
 
-// 抓帧：视频/摄像头画面 → JPEG → 后端该通道的缓存（窗口隐藏时也继续，保证随时能截到当前画面）
+// 录制用的视频流：摄像头直接用 getUserMedia 的流；视频文件用 <video>.captureStream()（同一地址复用）
+function msRecStream() {
+  if (msStream) return msStream;
+  const v = $('#msVideo');
+  const key = v.currentSrc || v.src || '';
+  if (!key) return null;
+  if (msCapStream && msCapFor === key) return msCapStream;
+  if (typeof v.captureStream !== 'function') return null;
+  try { msCapStream = v.captureStream(); msCapFor = key; } catch (_) { return null; }
+  return msCapStream;
+}
+
+// 开始一段录制：录满 MS_REC_CHUNKS 秒自动停下 → 回传后端 → 继续录下一段
+function msRecStart() {
+  if (msRec || msRecDead || !msRecWant || !MS_REC_MIME) return;
+  const stream = msRecStream();
+  if (!stream || !stream.getVideoTracks().length) return;
+  const ch = msCh; // 捕获当前通道：中途切通道也不会把片段传到别的通道
+  let rec;
+  try {
+    rec = new MediaRecorder(stream, { mimeType: MS_REC_MIME, videoBitsPerSecond: 1500000 });
+  } catch (e) { console.warn('录制启动失败：', e.message); msRecWant = false; return; }
+  const chunks = [];
+  let n = 0;
+  rec.ondataavailable = e => {
+    if (e.data && e.data.size) chunks.push(e.data);
+    if (++n >= MS_REC_CHUNKS && rec.state !== 'inactive') { try { rec.stop(); } catch (_) { } }
+  };
+  rec.onstop = async () => {
+    if (msRec === rec) msRec = null;
+    const blob = new Blob(chunks, { type: rec.mimeType || MS_REC_MIME });
+    if (!msRecWant) return; // 拆流（切源/切通道/关页面）时不回传半截片段，后端保留上一段完整的
+    if (blob.size > 2000) {
+      msRecFail = 0;
+      try { await fetch(api('videoclip') + '?ch=' + ch, { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob }); } catch (_) { }
+    } else if (++msRecFail >= 3) { // 连续录不出数据（解码失败/流被断开）就别再空转
+      msRecDead = true;
+      msRecWant = false;
+      console.warn('录制未产生数据，已停止；视频附件回退内置 alarm.mp4');
+      poll();
+      return;
+    }
+    if (msRecWant) setTimeout(msRecStart, 100);
+  };
+  try { rec.start(1000); } catch (e) { console.warn('录制启动失败：', e.message); msRecWant = false; return; }
+  msRec = rec;
+}
+
+function msRecStop() {
+  msRecWant = false;
+  msRecFail = 0;
+  msRecDead = false;
+  const rec = msRec;
+  msRec = null;
+  if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch (_) { } }
+}
+
+// 抓帧：视频/摄像头画面 → JPEG → 后端该通道的帧历史（窗口隐藏时也继续，保证随时能截到当前画面）
 function msStartCapture() {
   if (msTimer) return;
   msTimer = setInterval(async () => {
@@ -79,6 +152,7 @@ async function msCamera(quiet) {
     await msListDevices();
     if (!quiet) toast(`${msChName()} 已开启摄像头，循环抓帧中`, 'ok');
     msStartCapture();
+    msRecWant = true; msRecStart(); // 同时录最近约 6 秒做视频附件
     poll();
   } catch (e) {
     if (!quiet) toast('摄像头打开失败：' + e.message + '（请允许摄像头权限）');
@@ -205,29 +279,39 @@ function renderMs(s) {
       v.src = msUrl('mediasrc') + '&t=' + msUpTick;
       v.play().catch(() => { });
       msStartCapture();
+      msRecWant = true; msRecStart();
     }
   }
   if (src === 'camera' && msStream) {
     $('#msCamWrap').hidden = $('#msCam').options.length < 2;
     msStartCapture();
+    msRecWant = true; msRecStart();
   }
 
   const stampTip = s.mediaStamp === false ? '' : '画面左下角烧入时间与通道号。';
   const frameText = ms.frameAge >= 0 ? `最近一帧 ${ms.frameAge} 秒前（${(ms.frameSize / 1024).toFixed(0)} KB）` : '';
+  const clipText = ms.clipAge >= 0 ? `最近一段录制 ${ms.clipAge} 秒前（${(ms.clipSize / 1024).toFixed(0)} KB）` : '';
+  const recNote = msRecDead ? '录制未产生数据，视频附件回退内置 alarm.mp4'
+    : !MS_REC_MIME ? '当前浏览器不支持 MediaRecorder，视频附件用内置 alarm.mp4'
+      : (MS_REC_MIME.includes('mp4') ? '视频附件取最近约 6 秒录制（MP4）'
+        : '视频附件取最近约 6 秒录制（浏览器只支持 WebM 录制，文件按 .webm 上传）');
   // 抓帧靠浏览器定时器，窗口最小化 / 标签页在后台会被节流；此时附件仍沿用最后一帧，不退回合成图
   const staleTip = ms.stale ? `前端抓帧已暂停 ${ms.frameAge} 秒（窗口最小化或标签页在后台会被节流），附件仍沿用这一帧。` : '';
   const inhTip = inherited ? '当前继承「全部通道」设置，在「全部通道」或本通道重新选择即可覆盖。' : '';
   let body;
   if (src === '') {
-    body = '合成彩条测试图 + 内置 alarm.mp4。选择图片/视频文件或摄像头后，上传附件时截取当前播放画面（每秒抓帧，附件始终用最新一帧）。';
+    body = '合成彩条测试图 + 内置 alarm.mp4（3 秒彩条：附件里看到它就说明这个通道没设真实媒体源）。'
+      + '选择图片/视频文件或摄像头后，图片附件截取当前画面（多张按 2 秒间隔取不同时刻），视频附件取最近约 6 秒录制。';
   } else if (src === 'image') {
-    body = '图片附件用上传的这张图片；视频附件仍用内置 alarm.mp4。';
+    body = '图片附件用上传的这张图片（多张时按 2 秒间隔错开时间水印）；图片源没有播放画面，视频附件仍用内置 alarm.mp4。';
   } else if (src === 'camera') {
     body = camIdle
-      ? '摄像头未开启：程序重启后浏览器不会自动恢复视频流（也可能权限被拒），此时附件图片会用合成彩条图。点上面的「电脑摄像头」或下面的「开启摄像头」恢复。'
-      : (frameText ? `摄像头循环抓帧，${frameText}。` : '等待摄像头画面…') + staleTip + '图片附件取当前画面；摄像头无源视频，视频附件仍用内置 alarm.mp4。';
+      ? '摄像头未开启：程序重启后浏览器不会自动恢复视频流（也可能权限被拒），此时附件图片会用合成彩条图、视频用内置 alarm.mp4。点上面的「电脑摄像头」或下面的「开启摄像头」恢复。'
+      : (frameText ? `摄像头循环抓帧，${frameText}。` : '等待摄像头画面…') + staleTip
+        + `图片附件取当前画面（多张按 2 秒间隔取不同时刻）；${recNote}${clipText ? '，' + clipText : ''}。`;
   } else {
-    body = (frameText ? `视频循环播放，${frameText}。` : '视频加载中…') + staleTip + '图片附件截取当前播放画面，视频附件使用上传的源视频。';
+    body = (frameText ? `视频循环播放，${frameText}。` : '视频加载中…') + staleTip
+      + `图片附件截取当前播放画面（多张按 2 秒间隔取不同时刻）；${recNote}${clipText ? '，' + clipText : ''}。`;
   }
   $('#msHint').textContent = msChName() + '：' + body + stampTip + inhTip;
 }

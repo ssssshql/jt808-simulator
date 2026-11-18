@@ -253,6 +253,7 @@
               <div class="field"><label class="lbl" for="aFiles">附件数量</label><div class="input-unit"><input id="aFiles" type="number" value="3" min="0" max="10"><span>个</span></div></div>
               <div class="field span2"><label class="lbl" for="aFlag">标志状态</label><select id="aFlag"><option value="-1">自动（报警=开始，事件=不可用）</option><option value="1">0x01 开始标志</option><option value="2">0x02 结束标志</option><option value="0">0x00 不可用</option></select></div>
             </div>
+            <p class="hint">附件数量是「终端告诉平台这次有几个附件」；平台 9208 里的文件总数可以不同。粤标附件 ≥3 个时拆成「N-2 张图片 + 1 段视频 + 1 个车辆状态数据记录文件（bin）」，平台的媒体列表一般只展示图片和视频，bin 不显示。实际上传了哪些文件看日志里的「[附件] 9208 要求 …」一行。</p>
             <div class="btns"><button class="btn primary" id="aSend">上报报警</button></div>
           </div>
           <div class="card">

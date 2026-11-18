@@ -3,9 +3,10 @@ package main
 // 媒体源：报警附件 / 拍照的画面来源，按通道独立设置（64 ADAS / 65 DSM / 66 TPMS / 67 BSD）。
 // 通道未单独设置时继承「全部通道」（通道 0）的设置；两者都没设就是合成的彩条测试图。
 // 可改为上传的图片 / 视频文件，或浏览器（桌面版 WebView2 / -web 浏览器）摄像头。
-// 视频与摄像头由前端循环播放并每秒 canvas 抓帧回传（POST frame），后端按通道缓存最新一帧；
-// 平台 9208 触发附件上传时，图片附件取该通道当前画面，视频附件用该通道上传的源视频
-// （摄像头无源视频时回退内置 alarm.mp4）。
+// 视频与摄像头由前端循环播放，每秒 canvas 抓帧回传（POST frame），后端按通道缓存最近 ~30 帧；
+// 同时前端用 MediaRecorder 每约 6 秒录一段回传（POST videoclip），后端只留最近一段。
+// 平台 9208 触发附件上传时，多张图片按序号从帧历史里取不同时刻（水印时间递减），
+// 视频附件用最近一段录制（摄像头/视频模式），其次上传的源视频，最后回退内置 alarm.mp4。
 
 import (
 	"bytes"
@@ -19,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,17 +29,29 @@ func mediaDir() string { return filepath.Join(stateDir, "media") }
 const (
 	maxMediaBytes = 64 << 20 // 上传媒体文件上限
 	maxFrameBytes = 4 << 20  // 单帧 JPEG 上限
+	maxClipBytes  = 16 << 20 // 单段录制视频上限
+	maxFrames     = 30       // 每通道保留的抓帧数（前端每秒一帧 → 约 30 秒历史）
 	// frameStale 仅为提示用：浏览器在窗口最小化/页面不可见时会把抓帧定时器节流，
 	// 超过这个时长没新帧就在页面上提示，但附件仍沿用最后一帧（不回退合成图）
 	frameStale = 30 * time.Second
+	// attachShotGap 一次报警的多张图片之间的抓拍间隔：第 i 张取 (n-1-i)*gap 之前的画面，
+	// 让图片附件的时间水印真正错开（否则多张图完全一样，看不出是连续抓拍）
+	attachShotGap = 2 * time.Second
 )
 
 // mediaChs 可单独设置媒体源的通道号；0 表示「全部通道」（默认，其他通道未设置时继承它）
 var mediaChs = []int{64, 65, 66, 67}
 
-// frameBuf 某通道最近一次抓帧
+// frameBuf 某通道的一次抓帧
 type frameBuf struct {
 	data []byte
+	at   time.Time
+}
+
+// clipBuf 视频/摄像头最近一段录制（前端 MediaRecorder 回传），附件视频用它
+type clipBuf struct {
+	data []byte
+	mime string
 	at   time.Time
 }
 
@@ -121,6 +135,16 @@ func (t *Terminal) setMediaLocked(ch int, kind string) {
 	t.Cfg.MediaCh[chKey(ch)] = kind
 }
 
+// dropCache 丢掉该通道的抓帧历史与录制片段（换源/清源后旧画面必须作废）。调用方持有 t.mu
+func (t *Terminal) dropCache(ch int) {
+	if ch == 0 {
+		t.frames, t.clips = map[string][]frameBuf{}, map[string]clipBuf{}
+		return
+	}
+	delete(t.frames, chKey(ch))
+	delete(t.clips, chKey(ch))
+}
+
 // mediaSrcOf 该通道实际生效的来源类型：通道单独设置优先，否则用全局。调用方持有 t.mu
 func (t *Terminal) mediaSrcOf(ch int) string {
 	if ch != 0 {
@@ -131,12 +155,45 @@ func (t *Terminal) mediaSrcOf(ch int) string {
 	return t.Cfg.MediaSrc
 }
 
-// frameOf 该通道的帧：通道专属优先，回退「全部通道」的帧。调用方持有 t.mu
+// frameOf 该通道最新帧：通道专属优先，回退「全部通道」的帧。调用方持有 t.mu
 func (t *Terminal) frameOf(ch int) frameBuf {
-	if fb, ok := t.frames[chKey(ch)]; ok && len(fb.data) > 0 {
-		return fb
+	if fb := t.frames[chKey(ch)]; len(fb) > 0 {
+		return fb[0]
 	}
-	return t.frames[chKey(0)]
+	if fb := t.frames[chKey(0)]; len(fb) > 0 {
+		return fb[0]
+	}
+	return frameBuf{}
+}
+
+// frameAgo 该通道约 back 之前的帧：取时间最接近的一帧，历史不够就用最旧的那帧。调用方持有 t.mu
+func (t *Terminal) frameAgo(ch int, back time.Duration) frameBuf {
+	list := t.frames[chKey(ch)]
+	if len(list) == 0 {
+		list = t.frames[chKey(0)]
+	}
+	if len(list) == 0 {
+		return frameBuf{}
+	}
+	best, diff := list[0], time.Duration(1<<62)
+	for _, fb := range list {
+		d := time.Since(fb.at) - back
+		if d < 0 {
+			d = -d
+		}
+		if d < diff {
+			best, diff = fb, d
+		}
+	}
+	return best
+}
+
+// clipOf 该通道最近一段录制视频：通道专属优先，回退「全部通道」。调用方持有 t.mu
+func (t *Terminal) clipOf(ch int) clipBuf {
+	if c, ok := t.clips[chKey(ch)]; ok && len(c.data) > 0 {
+		return c
+	}
+	return t.clips[chKey(0)]
 }
 
 // setMediaSource 上传并设置媒体源（kind = image / video）。图片统一重编码为 JPEG 保存。
@@ -186,11 +243,7 @@ func (t *Terminal) setMediaSource(ch int, kind, ext string, data []byte) error {
 	}
 	t.mu.Lock()
 	t.setMediaLocked(ch, kind)
-	if ch == 0 {
-		t.frames = nil // 全部通道换源：各通道的旧帧都作废
-	} else {
-		delete(t.frames, chKey(ch))
-	}
+	t.dropCache(ch)
 	t.markDirty()
 	t.mu.Unlock()
 	t.logf("通道 %s 媒体源已设置为%s（%d 字节）", chLabel(ch), mediaName(kind), len(out))
@@ -207,11 +260,7 @@ func (t *Terminal) clearMediaSource(ch int) {
 	}
 	t.mu.Lock()
 	t.setMediaLocked(ch, "")
-	if ch == 0 {
-		t.frames = nil
-	} else {
-		delete(t.frames, chKey(ch))
-	}
+	t.dropCache(ch)
 	t.markDirty()
 	t.mu.Unlock()
 	t.logf("通道 %s 媒体源已恢复为默认合成画面", chLabel(ch))
@@ -227,16 +276,16 @@ func (t *Terminal) setCamera(ch int, on bool) {
 	switch {
 	case on:
 		t.setMediaLocked(ch, "camera")
-		delete(t.frames, chKey(ch)) // 作废上一个源留下的帧
+		t.dropCache(ch) // 作废上一个源留下的帧与录制片段
 	case cur == "camera":
 		t.setMediaLocked(ch, "")
-		delete(t.frames, chKey(ch))
+		t.dropCache(ch)
 	}
 	t.markDirty()
 	t.mu.Unlock()
 }
 
-// setFrame 前端回传的当前画面（JPEG）
+// setFrame 前端回传的当前画面（JPEG），同时进该通道的帧历史（附件多张图片取不同时刻）
 func (t *Terminal) setFrame(ch int, data []byte) error {
 	if !validCh(ch) {
 		return fmt.Errorf("通道号只能是 0（全部）或 64/65/66/67")
@@ -246,26 +295,72 @@ func (t *Terminal) setFrame(ch int, data []byte) error {
 	}
 	t.mu.Lock()
 	if t.frames == nil {
-		t.frames = map[string]frameBuf{}
+		t.frames = map[string][]frameBuf{}
 	}
-	t.frames[chKey(ch)] = frameBuf{data, time.Now()}
+	k := chKey(ch)
+	list := make([]frameBuf, 0, maxFrames)
+	list = append(list, frameBuf{data, time.Now()})
+	list = append(list, t.frames[k]...)
+	if len(list) > maxFrames {
+		list = list[:maxFrames]
+	}
+	t.frames[k] = list
 	t.mu.Unlock()
 	return nil
 }
 
-// currentImage 该通道当前画面：视频/摄像头模式沿用最后一帧（不按时间作废——窗口最小化会让浏览器节流
-// 抓帧，按时间作废会莫名其妙退回合成图），其次图片文件（通道专属 → 全局）；都没有返回 nil（调用方回退合成图）
-func (t *Terminal) currentImage(ch int) []byte {
-	t.mu.Lock()
-	src, id, fb := t.mediaSrcOf(ch), t.ID, t.frameOf(ch)
-	t.mu.Unlock()
-	if len(fb.data) > 0 && (src == "video" || src == "camera") {
-		return fb.data
+// setClip 记录一段前端录制的视频（MediaRecorder 每约 6 秒一段，只留最近一段）
+func (t *Terminal) setClip(ch int, mime string, data []byte) error {
+	if !validCh(ch) {
+		return fmt.Errorf("通道号只能是 0（全部）或 64/65/66/67")
 	}
-	if src == "image" {
-		return readMediaFile(id, ch, ".jpg")
+	if len(data) < 64 {
+		return fmt.Errorf("视频片段为空")
+	}
+	if len(data) > maxClipBytes {
+		return fmt.Errorf("视频片段过大（最大 %d MB）", maxClipBytes>>20)
+	}
+	if mime == "" {
+		mime = http.DetectContentType(data)
+	}
+	if !strings.Contains(mime, "mp4") && !strings.Contains(mime, "webm") {
+		return fmt.Errorf("只接受 MP4/WebM 视频片段")
+	}
+	t.mu.Lock()
+	if t.clips == nil {
+		t.clips = map[string]clipBuf{}
+	}
+	prev := t.clips[chKey(ch)]
+	t.clips[chKey(ch)] = clipBuf{data, mime, time.Now()}
+	t.mu.Unlock()
+	if prev.mime != mime {
+		t.logf("通道 %s 收到录制视频（%s，%d KB），附件视频将使用它", chLabel(ch), mime, len(data)>>10)
 	}
 	return nil
+}
+
+// imageAt 该通道约 back 之前的画面与拍摄时间：视频/摄像头取帧历史里最近的时刻
+// （不按时间作废——窗口最小化会让浏览器节流抓帧，按时间作废会莫名其妙退回合成图），
+// 图片模式取上传文件（时间按 now-back 模拟连续抓拍）；都没有返回 nil（调用方回退合成图）
+func (t *Terminal) imageAt(ch int, back time.Duration) ([]byte, time.Time) {
+	t.mu.Lock()
+	src, id, fb := t.mediaSrcOf(ch), t.ID, t.frameAgo(ch, back)
+	t.mu.Unlock()
+	if len(fb.data) > 0 && (src == "video" || src == "camera") {
+		return fb.data, fb.at
+	}
+	if src == "image" {
+		if b := readMediaFile(id, ch, ".jpg"); len(b) > 0 {
+			return b, time.Now().Add(-back)
+		}
+	}
+	return nil, time.Now().Add(-back)
+}
+
+// currentImage 该通道当前画面（预览用）
+func (t *Terminal) currentImage(ch int) []byte {
+	img, _ := t.imageAt(ch, 0)
+	return img
 }
 
 // stampEnabled 是否给附件画面烧入时间水印（默认烧，Config.NoStamp 关闭）
@@ -275,40 +370,70 @@ func (t *Terminal) stampEnabled() bool {
 	return !t.Cfg.NoStamp
 }
 
-// stampIf 按需烧入时间水印（合成图、上传图片、抓帧都走这里，保证附件与预览一致）
-func (t *Terminal) stampIf(img []byte, ch int) []byte {
+// stampIfAt 按需烧入时间水印，水印时间用画面的拍摄时刻（多张图片因此时间递减）
+func (t *Terminal) stampIfAt(img []byte, ch int, at time.Time) []byte {
 	if len(img) == 0 || !t.stampEnabled() {
 		return img
 	}
-	return stampJPEG(img, ch, time.Now())
+	return stampJPEG(img, ch, at)
 }
 
-// attachmentImage 该通道用于附件的图片：有画面就烧入时间水印；没有返回 nil（调用方回退合成图）
-func (t *Terminal) attachmentImage(ch int) []byte {
-	return t.stampIf(t.currentImage(ch), ch)
+// stampIf 烧入当前时间的水印
+func (t *Terminal) stampIf(img []byte, ch int) []byte { return t.stampIfAt(img, ch, time.Now()) }
+
+// attachmentImageAt 该通道约 back 之前的附件图片（含时间水印）；没有画面返回 nil
+func (t *Terminal) attachmentImageAt(ch int, back time.Duration) []byte {
+	img, at := t.imageAt(ch, back)
+	return t.stampIfAt(img, ch, at)
 }
 
-// attachmentVideo 该通道视频附件内容：上传的源视频优先，否则内置 alarm.mp4
-func (t *Terminal) attachmentVideo(ch int) []byte {
+// attachmentImage 该通道当前的附件图片（含时间水印）；没有画面返回 nil（调用方回退合成图）
+func (t *Terminal) attachmentImage(ch int) []byte { return t.attachmentImageAt(ch, 0) }
+
+// videoExt 录制片段的后缀：MP4 用协议惯例 .mp4；WebM 如实标 .webm
+// （Chrome/WebView2 不一定支持 MediaRecorder 录 MP4，硬改成 .mp4 只会让平台解析失败）
+func videoExt(mime string) string {
+	if strings.Contains(mime, "webm") {
+		return ".webm"
+	}
+	return ".mp4"
+}
+
+// attachmentVideo 该通道视频附件内容与后缀：优先最近一段录制（当前播放画面），
+// 其次上传的源视频，最后内置 alarm.mp4（3 秒彩条测试片）
+func (t *Terminal) attachmentVideo(ch int) ([]byte, string) {
 	t.mu.Lock()
-	src, id := t.mediaSrcOf(ch), t.ID
+	src, id, clip := t.mediaSrcOf(ch), t.ID, t.clipOf(ch)
 	t.mu.Unlock()
-	if src == "video" {
-		if b := readMediaFile(id, ch, ".mp4"); b != nil {
-			return b
+	if src == "video" || src == "camera" {
+		if len(clip.data) > 0 {
+			if strings.Contains(clip.mime, "mp4") {
+				return clip.data, ".mp4"
+			}
+			if src == "camera" { // 摄像头没有源文件可退，只能回传录制的 WebM
+				return clip.data, videoExt(clip.mime)
+			}
 		}
 	}
-	return alarmMP4
+	if src == "video" {
+		if b := readMediaFile(id, ch, ".mp4"); b != nil {
+			return b, ".mp4"
+		}
+	}
+	return alarmMP4, ".mp4"
 }
 
 // mediaView 各通道媒体源状态（页面显示用）。调用方持有 t.mu（State 内调用）
 func (t *Terminal) mediaView() map[string]any {
 	out := make(map[string]any, len(mediaChs)+1)
 	for _, ch := range append([]int{0}, mediaChs...) {
-		src, fb := t.mediaSrcOf(ch), t.frameOf(ch)
-		age := -1
+		src, fb, clip := t.mediaSrcOf(ch), t.frameOf(ch), t.clipOf(ch)
+		age, clipAge := -1, -1
 		if !fb.at.IsZero() {
 			age = int(time.Since(fb.at).Seconds())
+		}
+		if !clip.at.IsZero() {
+			clipAge = int(time.Since(clip.at).Seconds())
 		}
 		own := src != ""
 		if ch != 0 {
@@ -317,7 +442,8 @@ func (t *Terminal) mediaView() map[string]any {
 		out[chKey(ch)] = map[string]any{
 			"src": src, "own": own,
 			"frameAge": age, "frameSize": len(fb.data),
-			"stale": age > int(frameStale.Seconds()), // 前端抓帧可能被浏览器节流，仅用于页面提示
+			"stale":   age > int(frameStale.Seconds()), // 前端抓帧可能被浏览器节流，仅用于页面提示
+			"clipAge": clipAge, "clipSize": len(clip.data), "clipMime": clip.mime,
 		}
 	}
 	return out
@@ -422,6 +548,24 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFrameBytes))
 		if err != nil || t.setFrame(ch, data) != nil {
 			writeJSON(w, 200, map[string]any{"ok": false, "error": "无效帧数据"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+	})
+	// 录制片段：前端 MediaRecorder 每约 6 秒把一段视频回传，附件视频用最近一段（POST videoclip）
+	handle("POST /videoclip", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
+		ch, ok := queryCh(r)
+		if !ok {
+			writeJSON(w, 200, map[string]any{"ok": false, "error": "通道号无效"})
+			return
+		}
+		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxClipBytes))
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"ok": false, "error": "读取失败: " + err.Error()})
+			return
+		}
+		if err := t.setClip(ch, r.Header.Get("Content-Type"), data); err != nil {
+			writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
