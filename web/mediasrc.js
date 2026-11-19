@@ -487,6 +487,17 @@ function renderMs(s) {
   $('#msHint').textContent = msChName() + '：' + body + h264Tip + stampTip + inhTip;
 }
 
-onState(s => page === 'media' && renderMs(s));
+function msBootAutoCam(s) {
+  if (msStream) return;
+  const all = s.mediaSrc || {};
+  let cur = all[msCh];
+  if ((!cur || !cur.src) && msCh === '0') {
+    const found = Object.entries(all).find(([, v]) => v && v.own && v.src === 'camera');
+    if (found) { msCh = found[0]; cur = found[1]; }
+  }
+  if (cur && cur.src === 'camera') msAutoCamera();
+}
+
+onState(s => { if (page === 'media') renderMs(s); else msBootAutoCam(s); });
 onPage('media', () => S && renderMs(S));
 onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); });
