@@ -97,7 +97,6 @@ function renderOverview(s) {
   }
 
   renderInbox(s);
-  renderGuide(s);
 }
 
 // ---------- 平台下发（日志卡片里的标签页，带未读角标） ----------
@@ -111,7 +110,7 @@ function setLogTab(t) {
   $('#log').hidden = inbox; $('#inbox').hidden = !inbox;
   $('.lt-log').hidden = inbox; $('.lt-inbox').hidden = !inbox;
   if (inbox) markInboxRead();
-  if (S) { renderInbox(S); renderGuide(S); }
+  if (S) renderInbox(S);
 }
 function markInboxRead() {
   if (!S || !S.inbox.length) return;
@@ -148,30 +147,6 @@ function renderInbox(s) {
     || '<div class="empty-sm">暂无平台下发。文本、提问、控制、参数设置等指令会显示在这里</div>';
 }
 onSwitch(() => { renderInbox.sig = ''; });
-
-// ---------- 首次使用引导：离线且还没有任何报文时，在日志区就地填写网关与手机号并上线 ----------
-function renderGuide(s) {
-  const c = s.conn, k = s.counters;
-  const show = logTab === 'log' && c.status === 'offline' && !k.up && !k.down;
-  const g = $('#ovGuide');
-  if (g.hidden !== !show) { g.hidden = !show; $('#log').classList.toggle('dim', show); }
-  if (!show) return;
-  setVal('gHost', c.host); setVal('gPort', c.port); setVal('gPhone', c.phone);
-  $('#gHint').firstChild.textContent = c.lastError ? `上次连接失败：${c.lastError}。` : '更多选项（协议版本、UDP、鉴权码、车牌…）在 ';
-}
-['gHost', 'gPort', 'gPhone'].forEach(id => $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') $('#gGo').click(); }));
-$('#gGo').onclick = async e => {
-  const host = $('#gHost').value.trim(), port = +$('#gPort').value, phone = $('#gPhone').value.trim();
-  if (!host) { toast('请填写网关地址'); $('#gHost').focus(); return; }
-  if (!(port >= 1 && port <= 65535)) { toast('端口范围 1~65535'); $('#gPort').focus(); return; }
-  if (!/^\d{1,20}$/.test(phone)) { toast('终端手机号只能是数字（最多 20 位）'); $('#gPhone').focus(); return; }
-  const c = S && S.conn;
-  if (!c || c.host !== host || c.port !== port || c.phone !== phone) {
-    if (!(await act('setConfig', { host, port, phone }, e.currentTarget))) return;
-    loadTerms();
-  }
-  act('connect', {}, e.currentTarget, '正在上线…');
-};
 onState(renderOverview);
 onPage('overview', () => S && renderOverview(S));
 $('#replySeg').onclick = e => { const b = e.target.closest('[data-r]'); if (b) act('setReply', { mode: b.dataset.r }, null, '应答策略：' + b.firstChild.textContent); };
