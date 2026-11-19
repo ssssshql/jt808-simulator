@@ -1,16 +1,14 @@
 package main
 
-// JT808 终端模拟器：命令行 / Web 界面（-web）。用法见 README.md，或运行后输入 help
+// JT808 终端模拟器：命令行（无界面）入口；不带参数启动桌面版时由 desktop.go 接管。用法见 README.md，或运行后输入 help
 
 import (
 	"bufio"
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -239,8 +237,9 @@ func main() {
 	plate := flag.String("plate", "", "车牌（默认 粤A12345）")
 	deviceID := flag.String("device-id", "", "终端ID（默认手机号后 7 位）")
 	token := flag.String("token", "", "已知鉴权码（VEHICLE.AUTHORIZE_CODE），跳过注册")
-	web := flag.String("web", "", "以 Web 界面启动，值为监听地址，例: -web 127.0.0.1:8090（-phone 可在页面填写）")
 	showVer := flag.Bool("version", false, "打印版本信息后退出")
+	scenFile := flag.String("scenario", "", "无界面运行场景脚本（YAML/JSON），结束后打印摘要；全部步骤与断言通过退出码 0，否则 1")
+	scenTimeout := flag.Duration("timeout", 0, "配合 -scenario：最长运行时间（如 10m），超时停止并判为失败；0 = 不限")
 	var cmds multiFlag
 	flag.Var(&cmds, "c", "启动后依次执行的命令，可多次指定；例: -c login -c notify -c quit")
 	flag.Parse()
@@ -252,36 +251,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-ver 只能是 2013 或 2019")
 		os.Exit(2)
 	}
-	if *web == "" && *phone == "" {
-		fmt.Fprintln(os.Stderr, "缺少 -phone。示例: jt808sim -host 127.0.0.1 -port 7611 -phone 13800000001（或 -web 127.0.0.1:8090）")
+	flagCfg := Config{Host: *host, Port: *port, Phone: *phone, Version: *ver, Plate: *plate, DeviceID: *deviceID, Token: *token}
+	if *scenFile != "" {
+		logDisk.Start()
+		os.Exit(runScenarioCLI(*scenFile, flagCfg, *scenTimeout))
+	}
+	if *phone == "" {
+		fmt.Fprintln(os.Stderr, "缺少 -phone。示例: jt808sim-cli -host 127.0.0.1 -port 7611 -phone 13800000001")
 		flag.PrintDefaults()
 		os.Exit(2)
-	}
-	flagCfg := Config{Host: *host, Port: *port, Phone: *phone, Version: *ver, Plate: *plate, DeviceID: *deviceID, Token: *token}
-	if *web != "" { // Web 模式：多终端（state/terminals.json），-c 命令作用于默认终端
-		m := NewManager(flagCfg)
-		logDisk.Start() // 报文日志落盘（state/logs，可在页面关闭）
-		stopSave := make(chan struct{})
-		defer close(stopSave)
-		go m.saveLoopStop(stopSave)
-		go func() { // systemd stop / Ctrl+C：先保存全部终端状态
-			sig := make(chan os.Signal, 1)
-			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-			<-sig
-			m.SaveAll()
-			os.Exit(0)
-		}()
-		t := m.Get("")
-		for _, line := range cmds {
-			if _, err := run(t, line); err != nil {
-				t.errf("%v", err)
-			}
-		}
-		if err := serveWeb(*web, m); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
 	}
 	t := NewTerminal(flagCfg)
 	go t.motionLoop()

@@ -14,12 +14,19 @@
   <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M6 25L12 16l5 6 3.5-5" fill="none" stroke="#c6f432" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="23" cy="11" r="6" fill="#d4ff3a" stroke="none"/><path d="M23 7.6l2.7 6.2-2.7-1.5-2.7 1.5z" fill="#141517" stroke="none"/></svg></span><span class="ttl">JT808 模拟器</span><span class="ver mono" id="verTag" hidden></span><button class="upd-badge" id="updBadge" hidden></button></div>
   <div class="tb-sep"></div>
   <div class="tb-cur" id="tbCur"></div>
-  <div id="connPill" class="status st-offline"><span class="dot"></span><span id="connText">离线</span></div>
+  <div id="connPill" class="status st-offline" role="status" aria-live="polite"><span class="dot"></span><span id="connText">离线</span></div>
   <div class="grow tb-drag"></div>
   <div class="hact">
-    <button class="pb dk" data-act="connect" id="btnConnect">上线</button>
-    <button class="pb" data-act="disconnect" id="btnDisconnect">断开</button>
-    <button class="pb rd" data-act="logout" data-confirm="发送 0003 注销并清除鉴权码？">注销</button>
+    <button class="pb dk" id="btnConn" title="上线（无鉴权码先注册）">上线</button>
+    <div class="dd" id="moreDd">
+      <button class="pb" id="moreBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu">更多 <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
+      <div class="dd-menu" id="moreMenu" role="menu" hidden>
+        <button role="menuitem" data-act="report">立即上报 0200</button>
+        <button role="menuitem" data-act="clearAlarms">清除全部报警</button>
+        <div class="dd-sep" role="separator"></div>
+        <button role="menuitem" class="rd" data-act="logout" data-confirm="发送 0003 注销并清除鉴权码？">注销（0003）</button>
+      </div>
+    </div>
     <a class="pb" href="https://www.19991029.xyz/jt808-parser/" target="_blank" rel="noopener" data-ext title="打开 JT808 报文解析器 (19991029.xyz)">报文解析器</a>
     <a class="pb icon" href="https://github.com/ssssshql/jt808-simulator" target="_blank" rel="noopener" data-ext aria-label="GitHub 仓库" title="GitHub 仓库 (ssssshql/jt808-simulator)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg></a>
     <button class="pb icon" id="themeBtn" aria-label="切换浅色/深色主题" title="切换浅色/深色主题"><span class="sun">☀</span><span class="moon">☾</span></button>
@@ -32,16 +39,20 @@
 </header>
 <div class="shell">
 <aside class="side">
-  <nav class="snav" id="nav"><a data-page="overview" tabindex="0" role="button" title="总览"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="nt">总览</span></a><a data-page="fleet" tabindex="0" role="button" title="多终端总览"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/></svg><span class="nt">多终端总览</span><span class="badge info" id="navFleet" hidden></span></a><a data-page="motion" tabindex="0" role="button" title="运动与位置"><svg class="ni" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span class="nt">运动与位置</span></a><a data-page="bits" tabindex="0" role="button" title="状态与报警"><svg class="ni" viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/></svg><span class="nt">状态与报警</span><span class="badge" id="navAlarm" hidden></span></a><a data-page="uplink" tabindex="0" role="button" title="上行报文"><svg class="ni" viewBox="0 0 24 24"><path d="M12 20V5M6 11l6-6 6 6"/></svg><span class="nt">上行报文</span></a><a data-page="adas" tabindex="0" role="button" title="主动安全"><svg class="ni" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/></svg><span class="nt">主动安全</span></a><a data-page="params" tabindex="0" role="button" title="终端参数"><svg class="ni" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="nt">终端参数</span></a><a data-page="media" tabindex="0" role="button" title="多媒体与视频"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg><span class="nt">多媒体与视频</span><span class="badge info" id="navStream" hidden></span></a><a data-page="areas" tabindex="0" role="button" title="区域"><svg class="ni" viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span class="nt">区域</span></a><a data-page="config" tabindex="0" role="button" title="终端配置"><svg class="ni" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span class="nt">终端配置</span></a><a data-page="scenario" tabindex="0" role="button" title="场景脚本"><svg class="ni" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M10 12l4 2.5-4 2.5z"/></svg><span class="nt">场景脚本</span><span class="badge info" id="navScen" hidden></span></a><a data-page="stress" tabindex="0" role="button" title="压力测试"><svg class="ni" viewBox="0 0 24 24"><path d="M3 20h18M6 16v-5M10 16V8M14 16v-7M18 16V5"/></svg><span class="nt">压力测试</span><span class="badge info" id="navStress" hidden></span></a></nav>
+  <nav class="snav" id="nav" aria-label="功能导航"><a data-page="overview" tabindex="0" role="button" title="总览"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="nt">总览</span></a><a data-page="fleet" tabindex="0" role="button" title="多终端总览"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/></svg><span class="nt">多终端总览</span><span class="badge info" id="navFleet" hidden></span></a><a data-page="motion" tabindex="0" role="button" title="运动与位置"><svg class="ni" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span class="nt">运动与位置</span></a><a data-page="bits" tabindex="0" role="button" title="状态与报警"><svg class="ni" viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/></svg><span class="nt">状态与报警</span><span class="badge" id="navAlarm" hidden></span></a><a data-page="uplink" tabindex="0" role="button" title="上行报文"><svg class="ni" viewBox="0 0 24 24"><path d="M12 20V5M6 11l6-6 6 6"/></svg><span class="nt">上行报文</span></a><a data-page="adas" tabindex="0" role="button" title="主动安全"><svg class="ni" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/></svg><span class="nt">主动安全</span></a><a data-page="params" tabindex="0" role="button" title="终端参数"><svg class="ni" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="nt">终端参数</span></a><a data-page="media" tabindex="0" role="button" title="多媒体与视频"><svg class="ni" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg><span class="nt">多媒体与视频</span><span class="badge info" id="navStream" hidden></span></a><a data-page="areas" tabindex="0" role="button" title="区域"><svg class="ni" viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span class="nt">区域</span></a><a data-page="config" tabindex="0" role="button" title="终端配置"><svg class="ni" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span class="nt">终端配置</span></a><a data-page="scenario" tabindex="0" role="button" title="场景脚本"><svg class="ni" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M10 12l4 2.5-4 2.5z"/></svg><span class="nt">场景脚本</span><span class="badge info" id="navScen" hidden></span></a><a data-page="stress" tabindex="0" role="button" title="压力测试"><svg class="ni" viewBox="0 0 24 24"><path d="M3 20h18M6 16v-5M10 16V8M14 16v-7M18 16V5"/></svg><span class="nt">压力测试</span><span class="badge info" id="navStress" hidden></span></a></nav>
   <div class="sterm">
-    <div class="sterm-h"><span>终端</span><span class="grow"></span>
+    <div class="sterm-h"><span>终端</span><span class="muted" id="tCount"></span><span class="grow"></span>
+      <button class="ib-btn" id="tSel" aria-label="多选终端" aria-pressed="false" title="多选终端，批量上线 / 断开"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
       <button class="ib-btn" id="tAdd" aria-label="新增终端" title="新增一个默认配置的终端（沿用当前终端的网关地址与协议版本）">＋</button>
       <button class="ib-btn" id="tClone" aria-label="复制终端" title="复制当前终端的配置、参数、区域与位置；手机号、车牌、IMEI 末位递增">⧉</button>
       <button class="ib-btn rd" id="tDel" aria-label="删除终端" title="删除当前终端">－</button>
     </div>
-    <div class="tchips" id="tchips"></div>
+    <div class="tsearch"><input id="tFilter" type="search" placeholder="搜索手机号 / 车牌" aria-label="搜索终端（手机号 / 车牌 / 编号）"></div>
+    <div class="tbatch" id="tBatch" hidden><label class="tb-all"><input type="checkbox" id="tAll" aria-label="全选（当前筛选结果）"><span id="tSelN">已选 0</span></label><span class="grow"></span>
+      <button class="btn xs" id="tOn">上线</button><button class="btn xs" id="tOff">断开</button></div>
+    <div class="tchips" id="tchips" role="listbox" aria-label="终端列表"></div>
   </div>
-  <button class="side-tg" id="sideTg" title="收起 / 展开侧栏"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="nt">收起侧栏</span></button>
+  <button class="side-tg" id="sideTg" title="收起 / 展开侧栏" aria-label="收起 / 展开侧栏"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="nt">收起侧栏</span></button>
 </aside>
 <div class="work">
 <main class="bento" id="dash">
@@ -65,10 +76,6 @@
     <div class="fl tl"><b>实时位置</b> <span class="mono" id="ovPos"></span></div>
     <div class="fl bl" id="ovMapInfo"></div>
   </div>
-  <div class="t inbox-t">
-    <div class="th"><b>平台下发</b><span id="inboxN"></span></div>
-    <div class="inbox" id="inbox"></div>
-  </div>
   <div class="t st">
     <div class="th"><b>状态位</b><span class="mono" id="hexStatusOv"></span><a class="r lnk" data-goto="bits">全部状态 →</a></div>
     <div class="tg" id="ovStatus"></div>
@@ -83,7 +90,9 @@
   </div>
   <div class="t logt" id="logTile">
     <div class="th log-tools">
-      <b>报文日志</b><span id="lStat"></span>
+      <div class="ltabs" role="tablist" aria-label="报文日志 / 平台下发"><button role="tab" id="tabLog" aria-selected="true" aria-controls="log" class="on">报文日志</button><button role="tab" id="tabInbox" aria-selected="false" aria-controls="inbox">平台下发<span class="badge" id="inboxBadge" hidden></span></button></div>
+      <span id="lStat"></span>
+      <span class="lt-log contents">
       <div class="seg sm" id="lDir"><button data-d="" class="on">全部</button><button data-d="up">上行</button><button data-d="down">下行</button><button data-d="sys">系统</button><button data-d="err">错误</button></div>
       <input id="lId" class="mono sm" placeholder="消息 ID" style="width:96px">
       <input id="lText" class="sm" placeholder="搜索摘要" style="width:130px">
@@ -91,8 +100,21 @@
       <div class="grow"></div>
       <span class="muted" id="lCount"></span>
       <button class="lnk" id="lExport" title="按终端 / 时间 / 方向 / 消息 ID 导出 CSV 或原始 hex">导出</button><button class="lnk" id="lPause">暂停</button><button class="lnk" id="lClear">清空</button><button class="lnk" id="lMax" title="放大 / 还原">放大</button>
+      </span>
+      <span class="lt-inbox" hidden><span class="grow"></span><span class="muted" id="inboxN"></span><button class="lnk" id="inboxRead">全部标为已读</button></span>
     </div>
-    <div class="log" id="log"></div>
+    <div class="log" id="log" role="tabpanel" aria-labelledby="tabLog"></div>
+    <div class="inbox" id="inbox" role="tabpanel" aria-labelledby="tabInbox" hidden></div>
+    <div class="guide" id="ovGuide" hidden>
+      <div class="guide-h"><b>开始模拟</b><span class="muted">填好网关地址和终端手机号，点「上线」即可注册、鉴权并开始上报位置</span></div>
+      <div class="guide-f">
+        <label class="field"><span class="lbl">网关地址</span><input id="gHost" class="mono" placeholder="127.0.0.1" autocomplete="off"></label>
+        <label class="field g-port"><span class="lbl">端口</span><input id="gPort" class="mono" type="number" min="1" max="65535"></label>
+        <label class="field"><span class="lbl">终端手机号</span><input id="gPhone" class="mono" inputmode="numeric" autocomplete="off"></label>
+        <button class="btn primary" id="gGo">上线</button>
+      </div>
+      <p class="hint" id="gHint">更多选项（协议版本、UDP、鉴权码、车牌…）在 <a class="link" data-goto="config">终端配置</a>。</p>
+    </div>
   </div>
   <div class="t reply">
     <div class="th"><b>应答策略</b></div>
@@ -190,7 +212,7 @@
 
       <!-- 状态与报警 -->
       <section class="page" id="page-bits" hidden>
-        <div class="page-head"><h1>状态与报警</h1><p class="sub">点击切换位；变化后立即上报 0200。灰色斜纹的位由模拟器根据位置/速度计算。</p></div>
+        <div class="page-head"><h1>状态与报警</h1><p class="sub">点击切换位；变化后立即上报 0200。灰色斜纹的位由模拟器根据位置/速度计算；带 <span class="auto-ic" aria-hidden="true"></span> 的报警位由模拟器自动判定，点右侧锁可锁定为手动值、不再被自动判定改写。</p></div>
         <div class="card">
           <div class="card-h"><h2>状态位</h2><span class="muted">0200 状态（DWORD）</span><div class="grow"></div><span class="mono muted" id="hexStatus"></span></div>
           <div class="bits" id="bStatus"></div>
@@ -404,7 +426,7 @@
       <section class="page" id="page-scenario" hidden>
         <div class="page-head row"><div><h1>场景脚本</h1><p class="sub">用 YAML / JSON 描述终端、轨迹与时间线（报警置位/清除、断线重连、发送消息、改速度…），一键运行并查看进度；场景库保存在 state/scenarios.json</p></div>
           <div class="grow"></div>
-          <div class="btns"><button class="btn" id="scNew">新建</button><button class="btn" id="scExample">载入示例</button><button class="btn" id="scImport">导入文件</button>
+          <div class="btns"><button class="btn" id="scNew">新建</button><button class="btn" id="scExample">载入示例</button><button class="btn" id="scImport">导入文件</button><button class="btn" id="scRec" aria-pressed="false" title="录制在页面上的操作（报警、状态位、发送消息、运动、上线/断开…），停止后生成场景脚本">● 开始录制</button>
             <input type="file" id="scFile" accept=".yaml,.yml,.json,.txt" hidden></div></div>
         <div class="grid g-up">
           <div class="card"><div class="card-h"><h2>场景库</h2><span class="tag" id="scLibN"></span></div><div class="msg-list sc-lib" id="scLib"></div></div>
@@ -417,6 +439,7 @@
               <p class="hint" id="scMsg"></p>
               <details class="sc-help"><summary>动作与触发条件</summary>
                 <p class="hint">触发：<span class="mono">at</span> 开始后第 N 秒 · <span class="mono">after</span> 上一步完成后 N 秒 · <span class="mono">atPoint</span> 到达轨迹第 N 点 · <span class="mono">atProgress</span> 轨迹进度 0~1；都不写则紧接上一步。步骤按书写顺序执行。</p>
+                <p class="hint">断言：<span class="mono">expectDown(msgId, within, since, count, bodyPrefix) / expectState(path, op, value, within) / expectBit(kind, bit, on, within)</span>；失败计为该步失败，命令行 <span class="mono">jt808sim-cli -scenario 文件</span> 按结果返回退出码。</p>
                 <p class="hint">动作：<span class="mono">connect / disconnect / reconnect(wait) / waitOnline(timeout) / wait(seconds) / alarm(bit[,on]) / clearAlarm(bit) / clearAlarms / status(bit,on) / videoAlarm / signal / io / speed(speed) / motion(mode,speed) / position(lng,lat) / report / send(msgId,params) / raw(line) / adas(kind,alarmType,level) / replay(mult,seek,loop) / log(text) / logout</span>，以及页面动作名（setParam、setReply 等）。bit 可写位号或名称（如 超速报警）。</p>
               </details>
             </div>
@@ -459,7 +482,7 @@
 </section>
 </div>
 </div>
-<footer class="sbar" id="sbar"><div class="meta" id="meta"></div><span class="grow"></span><span id="sbInfo"></span></footer>
+<footer class="sbar" id="sbar"><div class="meta" id="meta"></div><span class="sb-warn" id="sbWarn" hidden></span><span class="grow"></span><span id="sbInfo"></span></footer>
 <div class="toasts" id="toasts"></div>
 <div class="modal" id="updModal" role="dialog" aria-modal="true" hidden><div class="modal-box upd-box">
   <div class="upd-h"><b id="updTitle"></b><span class="muted" id="updSub"></span></div>

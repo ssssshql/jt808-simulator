@@ -190,14 +190,45 @@ func (t *Terminal) linkTick(online bool) error {
 
 // ---------------- 盲区补报 ----------------
 
+const (
+	defaultBlindCap = 5000
+	minBlindCap     = 10
+	maxBlindCap     = 100000
+)
+
+// blindCap 盲区补报队列上限（Config.BlindCap，0 = 默认 5000）
+func (c *Config) blindCap() int {
+	if c.BlindCap <= 0 {
+		return defaultBlindCap
+	}
+	return min(max(c.BlindCap, minBlindCap), maxBlindCap)
+}
+
 func (t *Terminal) storeBlind(body []byte) {
 	t.mu.Lock()
 	t.Blind = append(t.Blind, hex.EncodeToString(body))
-	if len(t.Blind) > 5000 {
-		t.Blind = t.Blind[len(t.Blind)-5000:]
-	}
+	warn := t.trimBlind()
 	t.markDirty()
 	t.mu.Unlock()
+	if warn != "" {
+		t.errf("%s", warn)
+	}
+}
+
+// trimBlind 队列超过上限时丢弃最旧的条目，返回告警文本（限频：每 10 秒最多一条，避免刷屏）。调用方持有 t.mu
+func (t *Terminal) trimBlind() string {
+	limit := t.Cfg.blindCap()
+	n := len(t.Blind) - limit
+	if n <= 0 {
+		return ""
+	}
+	t.Blind = append([]string(nil), t.Blind[n:]...)
+	t.blindDropped += n
+	if time.Since(t.blindWarnAt) < 10*time.Second {
+		return ""
+	}
+	t.blindWarnAt = time.Now()
+	return fmt.Sprintf("盲区补报队列已满（上限 %d 条），丢弃最旧的 %d 条，本次运行累计丢弃 %d 条；可在「终端配置 → 行为」调大上限", limit, n, t.blindDropped)
 }
 
 // flushBlind 上线后以 0704 类型 1（盲区补报）批量补传，每批最多 10 条，收到成功应答再删除

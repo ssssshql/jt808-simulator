@@ -5,17 +5,8 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"sort"
 	"time"
 )
-
-type partial struct {
-	id, total, first int
-	parts            map[int][]byte
-	since            time.Time
-	asks             int
-	last             *Msg
-}
 
 type handler func(t *Terminal, m *Msg)
 
@@ -42,7 +33,8 @@ func (t *Terminal) onDown(m *Msg) {
 			return
 		}
 	}
-	if m.RSA { // 消息体 RSA 加密：用终端私钥解密（分包时对重组后的完整消息体解密）
+	defer func() { t.noteDown(m) }() // 场景断言：记录收到的下行（分包重组、解密后的完整消息）
+	if m.RSA {                       // 消息体 RSA 加密：用终端私钥解密（分包时对重组后的完整消息体解密）
 		t.mu.Lock()
 		key := t.termRSA()
 		t.mu.Unlock()
@@ -145,75 +137,51 @@ func (t *Terminal) ack(m *Msg, result int) {
 	t.send(0x0001, bCommonReply(m.Serial, m.ID, result), fmt.Sprintf("%04X %s", m.ID, resultText[result]))
 }
 
-// assemble 下行分包重组；未收齐返回 nil。升级包每包单独应答
+// assemble 下行分包重组（internal/codec.Assembler）；未收齐返回 nil。升级包每包单独应答
 func (t *Terminal) assemble(m *Msg) *Msg {
-	if m.Total <= 0 || m.Index < 1 || m.Index > m.Total {
-		t.errf("%04X 分包序号非法：%d/%d", m.ID, m.Index, m.Total)
+	t.mu.Lock()
+	full, err := t.downParts.Add(m, time.Now())
+	t.mu.Unlock()
+	if err != nil {
+		t.errf("%v", err)
 		return nil
 	}
-	t.mu.Lock()
-	p := t.downParts[m.ID]
-	if p == nil || p.total != m.Total {
-		p = &partial{id: m.ID, total: m.Total, first: (m.Serial - m.Index + 1) & 0xFFFF, parts: map[int][]byte{}}
-		t.downParts[m.ID] = p
-	}
-	p.parts[m.Index] = m.Body
-	p.since, p.last = time.Now(), m
-	done := len(p.parts) == p.total
-	if done {
-		delete(t.downParts, m.ID)
-	}
-	t.mu.Unlock()
 	t.logMsg("down", m.ID, m.Serial, len(m.Body), m.Raw, fmt.Sprintf("分包 %d/%d", m.Index, m.Total))
 	if m.ID == 0x8108 && m.Index < m.Total {
 		t.ack(m, 0)
 	}
-	if !done {
+	if full == nil {
 		return nil
 	}
-	var body []byte
-	for i := 1; i <= p.total; i++ {
-		body = append(body, p.parts[i]...)
-	}
-	t.logf("%04X 分包已收齐 %d 包，共 %d 字节", m.ID, p.total, len(body))
-	full := *m
-	full.Body, full.Total, full.Index = body, 0, 0
-	return &full
+	t.logf("%04X 分包已收齐 %d 包，共 %d 字节", m.ID, m.Total, len(full.Body))
+	return full
 }
 
 // checkPartials 分包超时：2019 版发 0005 请求补传缺失包，最多 3 次
 func (t *Terminal) checkPartials() {
 	t.mu.Lock()
-	var asks []*partial
+	type ask struct {
+		id   int
+		body []byte
+		miss []int
+	}
+	var asks []ask
 	for k, p := range t.downParts {
-		if time.Since(p.since) < 2*t.ackTimeout(0) {
+		if time.Since(p.Since) < 2*t.ackTimeout(0) {
 			continue
 		}
-		if t.Cfg.ver() < V2019 || p.asks >= 3 {
+		if t.Cfg.ver() < V2019 || p.Asks >= 3 {
 			delete(t.downParts, k)
-			t.errf("%04X 分包超时未收齐（%d/%d），丢弃", p.id, len(p.parts), p.total)
+			t.errf("%04X 分包超时未收齐（%d/%d），丢弃", p.ID, len(p.Parts), p.Total)
 			continue
 		}
-		p.asks++
-		p.since = time.Now()
-		asks = append(asks, p)
+		p.Asks++
+		p.Since = time.Now()
+		body, miss := p.ResendRequest()
+		asks = append(asks, ask{p.ID, body, miss})
 	}
 	t.mu.Unlock()
-	for _, p := range asks {
-		var miss []int
-		for i := 1; i <= p.total; i++ {
-			if _, ok := p.parts[i]; !ok {
-				miss = append(miss, i)
-			}
-		}
-		sort.Ints(miss)
-		if len(miss) > 255 {
-			miss = miss[:255]
-		}
-		body := cat(u16(p.first), []byte{byte(len(miss))})
-		for _, i := range miss {
-			body = cat(body, u16(i))
-		}
-		t.send(0x0005, body, fmt.Sprintf("请求补传 %04X 缺失包 %v", p.id, miss))
+	for _, a := range asks {
+		t.send(0x0005, a.body, fmt.Sprintf("请求补传 %04X 缺失包 %v", a.id, a.miss))
 	}
 }

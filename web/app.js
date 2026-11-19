@@ -1,4 +1,4 @@
-// 核心：后端交互、状态轮询、弹出面板（sheet）导航、主题、提示框、顶栏
+// 核心：后端交互、状态推送（SSE，失败时退回轮询）、页面导航、主题、提示框、顶栏、终端列表
 'use strict';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -37,12 +37,15 @@ function keepFields(ids) {
 }
 
 
-let S = null;                 // 最近一次 /api/state// 多终端：当前选中的终端编号（每个浏览器各自记住），接口路径 api/t/<编号>/...
+let S = null;                 // 当前终端的状态（SSE 全量快照 + 差量合并；退回轮询时为 /api/state）
+// 多终端：当前选中的终端编号（每个浏览器各自记住），接口路径 api/t/<编号>/...
 let TID = localStorage.getItem('jt808.term') || '';
 const api = p => (TID ? `api/t/${encodeURIComponent(TID)}/` : 'api/') + p;
 const switchHooks = [];       // 切换终端时调用（清空日志、重置地图视野等）
 const onSwitch = fn => switchHooks.push(fn);
-const stateHooks = [];        // 每次轮询后调用
+const stateHooks = [];        // 每次状态更新后调用
+const actHooks = [];          // 页面动作成功后调用 (type, params)，场景录制用
+const onAct = fn => actHooks.push(fn);
 const pageHooks = {};         // 切换到页面时调用
 const onState = fn => stateHooks.push(fn);
 const onPage = (p, fn) => (pageHooks[p] = pageHooks[p] || []).push(fn);
@@ -103,6 +106,40 @@ async function saveText(name, text, mime = 'text/plain;charset=utf-8') {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// ---------------- 复制到剪贴板 ----------------
+// 优先 navigator.clipboard；WebView2 / 非安全上下文下不可用时退回隐藏 textarea + execCommand('copy')
+async function copyText(text) {
+  text = String(text ?? '');
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (_) { }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
+  document.body.appendChild(ta);
+  const prev = document.activeElement;
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { }
+  ta.remove();
+  if (prev && typeof prev.focus === 'function') prev.focus();
+  return ok;
+}
+async function copyAndToast(text) {
+  if (await copyText(text)) toast('已复制 ' + text, 'ok');
+  else toast('复制失败，请手动选择文本复制');
+}
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-copy]');
+  if (c && c.dataset.copy) { e.preventDefault(); copyAndToast(c.dataset.copy); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const c = e.target.closest && e.target.closest('[data-copy][role=button]');
+  if (c && c.dataset.copy) { e.preventDefault(); copyAndToast(c.dataset.copy); }
+});
+
 // ---------------- 后端 ----------------
 async function fetchJSON(url, opts) {
   const r = await fetch(url, opts);
@@ -120,7 +157,8 @@ async function act(type, params = {}, btn, okMsg) {
     const j = await fetchJSON(api('action'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, ...params }) });
     if (!j.ok) { toast(j.error || '操作失败'); return false; }
     if (okMsg) toast(okMsg, 'ok');
-    poll();
+    actHooks.forEach(fn => { try { fn(type, params); } catch (e) { console.error(e); } });
+    if (!streamOK) poll();   // 状态推送连着时由后端立即推送变化
     return true;
   } catch (e) { toast('请求失败：' + e.message); return false; }
   finally { if (btn) btn.disabled = false; }
@@ -136,6 +174,7 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]');
   if (b) {
     if (b.dataset.confirm && !(await confirmBox(b.dataset.confirm))) return;
+    closeMore();
     const msg = { connect: '正在上线…', disconnect: '已断开', logout: '已注销', report: '已上报 0200', clearAlarms: '报警已清除' }[b.dataset.act];
     act(b.dataset.act, {}, b, msg);
   }
@@ -155,19 +194,48 @@ $('#themeBtn').onclick = () => {
   if (S) renderRing(S);
 };
 
-// ---------------- 侧栏收起 / 展开（记在本机） ----------------
+// ---------------- 侧栏收起 / 展开（记在本机）；窄屏（≤720px）自动收起为图标栏，展开时浮在内容上方 ----------------
+const narrowMQ = window.matchMedia('(max-width: 720px)');
+const HTML = document.documentElement;
 function syncSideTg() {
-  const mini = document.documentElement.classList.contains('side-mini');
+  const narrow = narrowMQ.matches;
+  HTML.classList.toggle('side-auto', narrow && !HTML.classList.contains('side-float'));
+  if (!narrow) HTML.classList.remove('side-float');
+  const mini = HTML.classList.contains('side-mini') || HTML.classList.contains('side-auto');
   $('#sideTg .nt').textContent = mini ? '展开侧栏' : '收起侧栏';
   $('#sideTg').title = mini ? '展开侧栏' : '收起侧栏';
+  $('#sideTg').setAttribute('aria-expanded', String(!mini));
 }
 $('#sideTg').onclick = () => {
-  const mini = document.documentElement.classList.toggle('side-mini');
-  localStorage.setItem('jt808.sideMini', mini ? '1' : '0');
+  if (narrowMQ.matches) HTML.classList.toggle('side-float');   // 窄屏：临时展开为浮层，不记住
+  else localStorage.setItem('jt808.sideMini', HTML.classList.toggle('side-mini') ? '1' : '0');
   syncSideTg();
   setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
 };
+narrowMQ.addEventListener('change', () => { syncSideTg(); setTimeout(() => window.dispatchEvent(new Event('resize')), 0); });
+document.addEventListener('click', e => {   // 窄屏浮层：点导航或侧栏外收起
+  if (!HTML.classList.contains('side-float')) return;
+  if (e.target.closest('#sideTg') || (e.target.closest('.side') && !e.target.closest('[data-page], [data-term]'))) return;
+  HTML.classList.remove('side-float'); syncSideTg();
+});
 syncSideTg();
+
+// ---------------- 「更多」下拉菜单 ----------------
+function closeMore() { $('#moreMenu').hidden = true; $('#moreBtn').setAttribute('aria-expanded', 'false'); }
+$('#moreBtn').onclick = e => {
+  e.stopPropagation();
+  const open = $('#moreMenu').hidden;
+  $('#moreMenu').hidden = !open;
+  $('#moreBtn').setAttribute('aria-expanded', String(open));
+  if (open) $('#moreMenu [role=menuitem]')?.focus();
+};
+document.addEventListener('click', e => { if (!e.target.closest('#moreDd')) closeMore(); });
+$('#moreMenu').addEventListener('keydown', e => {
+  const items = $$('#moreMenu [role=menuitem]'), i = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+  if (e.key === 'Escape') { e.stopPropagation(); closeMore(); $('#moreBtn').focus(); }
+  if (e.key === 'Tab') closeMore();
+});
 
 // ---------------- 导航：左侧栏切换「总览」与各功能页 ----------------
 let page = 'overview';        // 'overview' = 只看主屏；其它 = 弹出面板当前标签
@@ -197,6 +265,7 @@ $('#nav').addEventListener('keydown', e => {
 $('#sheetClose').onclick = $('#mask').onclick = () => go('overview');
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (!$('#moreMenu').hidden) { closeMore(); return; }
   for (const id of ['modal', 'exModal', 'updModal', 'repModal']) {
     const el = document.getElementById(id);
     if (el && !el.hidden) {
@@ -210,31 +279,58 @@ document.addEventListener('keydown', e => {
 window.addEventListener('hashchange', () => go(location.hash.slice(1)));
 
 // ---------------- 顶栏 ----------------
-const ST = { offline: '离线', connecting: '连接中', online: '在线', reconnecting: '等待重连' };
+const ST = { offline: '离线', connecting: '连接中', online: '在线', reconnecting: '重连中' };
+// 连接状态胶囊：离线 / 连接中 / 重连中显示重连次数与最近错误（如「重连中 · 第 3 次 · connection refused」），完整内容见悬停提示
+function connText(c) {
+  if (c.status === 'online') return ST.online + (c.onlineSince ? ' · ' + dur(Date.now() - c.onlineSince) : '');
+  const parts = [ST[c.status] || c.status];
+  if (c.status !== 'offline' && c.reconnects > 0) parts.push(`第 ${c.reconnects} 次`);
+  if (c.lastError) parts.push(shortErr(c.lastError));
+  return parts.join(' · ');
+}
+// shortErr 错误摘要：去掉 "dial tcp 1.2.3.4:7611: connect:" 这类前缀，最长 40 字
+function shortErr(e) {
+  let s = String(e).replace(/^.*?(?:dial|read|write) (?:tcp|udp)[^:]*(?::\d+)?(?:->[^:]+:\d+)?: /, '').replace(/^connect: /, '');
+  return s.length > 40 ? s.slice(0, 39) + '…' : s;
+}
+// copyChip 可点击复制的值（手机号 / 车牌）：键盘可达（role=button + Enter/Space）
+const copyChip = (v, cls = '') => v ? `<b class="cp ${cls}" role="button" tabindex="0" data-copy="${esc(v)}" title="点击复制">${esc(v)}</b>` : `<b class="${cls}">未设置</b>`;
 function renderTop(s) {
   const c = s.conn, k = s.counters;
   const pill = $('#connPill');
   pill.className = 'status st-' + c.status;
-  $('#connText').textContent = ST[c.status] + (c.status === 'online' && c.onlineSince ? ' · ' + dur(Date.now() - c.onlineSince) : '') +
-    (c.lastError && c.status !== 'online' ? ' · ' + c.lastError : '');
-  pill.title = c.lastError || '';
-  $('#meta').innerHTML = (() => {
-    const metaSig = `${c.phone}|${c.version}|${c.host}:${c.port}|${c.transport}|${s.device.plate}`;
-    if (renderTop.metaSig === metaSig) return $('#meta').innerHTML;
+  $('#connText').textContent = connText(c);
+  pill.title = [`状态：${ST[c.status] || c.status}`, c.reconnects ? `重连次数：${c.reconnects}` : '', c.lastError ? `最近错误：${c.lastError}` : '',
+    `服务器：${c.host}:${c.port}/${(c.transport || 'tcp').toUpperCase()}`].filter(Boolean).join('\n');
+  const metaSig = `${c.phone}|${c.version}|${c.host}:${c.port}|${c.transport}|${s.device.plate}`;
+  if (renderTop.metaSig !== metaSig) {
     renderTop.metaSig = metaSig;
-    return [['手机号', c.phone || '未设置', 1], ['协议', 'JT/T 808-' + c.version], ['服务器', `${c.host}:${c.port}${c.transport === 'udp' ? ' /UDP' : ''}`, 1], ['车牌', s.device.plate || '-']]
-      .map(([n, v, m]) => `<span class="m"><span>${n}</span><b class="${m ? 'mono' : ''}">${esc(v)}</b></span>`).join('');
-  })();
-  const on = c.status !== 'offline';
-  $('#btnConnect').disabled = on;
-  $('#btnDisconnect').disabled = !on;
+    $('#meta').innerHTML = [['手机号', copyChip(c.phone, 'mono')], ['协议', `<b>JT/T 808-${esc(c.version)}</b>`], ['服务器', `<b class="mono">${esc(`${c.host}:${c.port}${c.transport === 'udp' ? ' /UDP' : ''}`)}</b>`], ['车牌', copyChip(s.device.plate)]]
+      .map(([n, v]) => `<span class="m"><span>${n}</span>${v}</span>`).join('');
+    $('#tbCur').innerHTML = `${copyChip(c.phone, 'mono')}${s.device.plate ? `<span class="cp" role="button" tabindex="0" data-copy="${esc(s.device.plate)}" title="点击复制">${esc(s.device.plate)}</span>` : ''}`;
+  }
+  // 单个上线 / 断开切换按钮：离线时为蓝色主按钮「上线」，否则为「断开」
+  const on = c.status !== 'offline', btn = $('#btnConn');
+  btn.textContent = on ? '断开' : '上线';
+  btn.classList.toggle('dk', !on);
+  btn.dataset.on = on ? '1' : '';
+  btn.title = on ? '断开连接（不注销）' : '上线（无鉴权码先注册）';
   const alarms = s.alarms.filter(b => b.on).length + s.videoAlarms.filter(b => b.on).length;
   $('#navAlarm').hidden = !alarms; $('#navAlarm').textContent = alarms;
   $('#navStream').hidden = !s.streams.length; $('#navStream').textContent = s.streams.length;
   $('#lStat').textContent = `上行 ${k.up} · 下行 ${k.down}`;
-  $('#tbCur').innerHTML = `<b class="mono">${esc(c.phone || '未设置')}</b><span>${esc(s.device.plate || '')}</span>`;
   $('#sbInfo').textContent = `上行 ${k.up}  ·  下行 ${k.down}`;
+  // 盲区队列：接近上限或已丢弃时在状态栏提示
+  const warn = k.blindDropped > 0 ? `盲区队列已满，已丢弃最旧 ${k.blindDropped} 条（上限 ${k.blindCap}）` : k.blindQueue >= k.blindCap * 0.9 ? `盲区队列接近上限 ${k.blindQueue}/${k.blindCap}` : '';
+  $('#sbWarn').hidden = !warn; $('#sbWarn').textContent = warn ? '⚠ ' + warn : '';
+  if (k.blindDropped > (renderTop.dropped ?? k.blindDropped)) toast(`盲区补报队列已满（上限 ${k.blindCap} 条），丢弃了最旧的数据；可在「终端配置 → 行为」调大上限`);
+  renderTop.dropped = k.blindDropped;
 }
+$('#btnConn').onclick = e => {
+  const on = !!e.currentTarget.dataset.on;
+  act(on ? 'disconnect' : 'connect', {}, e.currentTarget, on ? '已断开' : '正在上线…');
+};
+onSwitch(() => { renderTop.metaSig = ''; renderTop.dropped = undefined; });
 onState(renderTop);
 
 // 渲染出错时同一错误只打印一次，避免每秒刷屏
@@ -255,6 +351,37 @@ function checkBuild(r) {
   if (sessionStorage.getItem('jt808.reloaded') !== b) { sessionStorage.setItem('jt808.reloaded', b); location.reload(); }
 }
 
+// ---------------- 状态：SSE 推送（全量快照 + 变化字段），断开时退回 1 秒轮询 ----------------
+let streamOK = false, stateES = null, streamRetry = 0;
+function setState(j) { S = j; runHooks(); }
+function startStream() {
+  clearTimeout(streamRetry);
+  if (stateES) { stateES.close(); stateES = null; }
+  streamOK = false;
+  if (document.hidden || !window.EventSource) return;
+  const want = TID, es = stateES = new EventSource(api('state/stream'));
+  es.addEventListener('state', m => {
+    if (stateES !== es || want !== TID) return;
+    let j;
+    try { j = JSON.parse(m.data); } catch (_) { return; }
+    if (j.full) {
+      streamOK = true;
+      if (j.build && BUILD && j.build !== BUILD) { checkBuild({ headers: { get: () => j.build } }); return; }
+      setState(j.state);
+    } else if (S && j.diff) {
+      Object.assign(S, j.diff);
+      runHooks();
+    }
+  });
+  es.addEventListener('gone', () => { es.close(); if (stateES === es) { stateES = null; streamOK = false; loadTerms(); } });
+  es.onerror = () => {   // 网络中断 / 服务重启：关闭并在 3 秒后重连，期间由轮询兜底
+    es.close();
+    if (stateES !== es) return;
+    stateES = null; streamOK = false;
+    streamRetry = setTimeout(startStream, 3000);
+  };
+}
+
 let pollingState = false;
 async function poll() {
   if (document.hidden || pollingState) return; // 窗口最小化/标签页隐藏时暂停轮询，避免并发重入
@@ -266,8 +393,7 @@ async function poll() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     if (want !== TID) return;   // 轮询途中切换了终端，丢弃旧终端的结果
-    S = j;
-    runHooks();
+    setState(j);
   } catch (e) {
     $('#connPill').className = 'status st-connecting';
     $('#connText').textContent = '模拟器未响应';
@@ -275,29 +401,48 @@ async function poll() {
     pollingState = false;
   }
 }
-setInterval(poll, 1000);
-// ---------------- 终端切换栏 ----------------
-let TERMS = [], loadingTerms = false;
+setInterval(() => { if (!streamOK) poll(); }, 1000);
+
+// ---------------- 终端列表（侧栏）：搜索、在线状态点、多选批量上线 / 断开 ----------------
+let TERMS = [], loadingTerms = false, termMax = 0;
+const tSel = new Set();       // 多选模式下选中的终端编号
+let tSelMode = false;
 async function loadTerms() {
   if (document.hidden || loadingTerms) return;
   loadingTerms = true;
   try {
     const j = await fetchJSON('api/terminals', { cache: 'no-store' });
     TERMS = j.terminals || [];
+    termMax = j.max;
     if (!TERMS.some(t => t.id === TID)) setTerm(j.default, true);
-    renderTerms(j.max);
+    for (const id of tSel) if (!TERMS.some(t => t.id === id)) tSel.delete(id);
+    renderTerms();
   } catch (_) { }
   finally { loadingTerms = false; }
 }
-function renderTerms(max) {
-  const sig = JSON.stringify([TID, TERMS]);
+const termMatch = (t, q) => !q || [t.id, '#' + t.id, t.phone, t.plate].some(v => String(v || '').toLowerCase().includes(q));
+function renderTerms() {
+  const q = $('#tFilter').value.trim().toLowerCase();
+  const list = TERMS.filter(t => termMatch(t, q));
+  const sig = JSON.stringify([TID, TERMS, q, tSelMode, [...tSel]]);
   if (renderTerms.sig === sig) return;
   renderTerms.sig = sig;
-  $('#tchips').innerHTML = TERMS.map(t => `<button class="tc st-${t.status} ${t.id === TID ? 'on' : ''}" data-term="${esc(t.id)}" title="#${esc(t.id)} ${esc(t.phone)} · ${esc(t.host)}:${t.port}/${esc((t.transport || 'tcp').toUpperCase())} · ${esc(ST[t.status] || t.status)}${t.default ? ' · 默认终端（旧接口 /api/state 等作用于它）' : ''}">
-    <i class="dot"></i><b>#${esc(t.id)}</b><span class="mono">${esc(t.phone || '未设置')}</span><em>${esc(t.plate || '')}</em>${t.alarms ? `<span class="badge">${t.alarms}</span>` : ''}</button>`).join('');
+  const online = TERMS.filter(t => t.status === 'online').length;
+  $('#tCount').textContent = TERMS.length > 1 ? `${online}/${TERMS.length} 在线` : '';
+  $('#tchips').classList.toggle('sel-mode', tSelMode);
+  $('#tchips').innerHTML = list.map(t => {
+    const st = ST[t.status] || t.status, picked = tSel.has(t.id);
+    return `<button class="tc st-${t.status} ${t.id === TID ? 'on' : ''} ${picked ? 'picked' : ''}" role="option" aria-selected="${tSelMode ? picked : t.id === TID}" data-term="${esc(t.id)}" title="#${esc(t.id)} ${esc(t.phone)} · ${esc(t.host)}:${t.port}/${esc((t.transport || 'tcp').toUpperCase())} · ${esc(st)}${t.default ? ' · 默认终端（旧接口 /api/state 等作用于它）' : ''}">
+    ${tSelMode ? `<i class="ck" aria-hidden="true"></i>` : ''}<i class="dot" aria-label="${esc(st)}"></i><b>#${esc(t.id)}</b><span class="mono">${esc(t.phone || '未设置')}</span><em>${esc(t.plate || '')}</em>${t.alarms ? `<span class="badge" aria-label="${t.alarms} 项报警">${t.alarms}</span>` : ''}</button>`;
+  }).join('') || `<div class="empty sm">没有匹配「${esc(q)}」的终端</div>`;
   $('#tDel').disabled = TERMS.length <= 1;
-  $('#tAdd').disabled = $('#tClone').disabled = max && TERMS.length >= max;
-  $('#tchips .tc.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  $('#tAdd').disabled = $('#tClone').disabled = termMax && TERMS.length >= termMax;
+  $('#tBatch').hidden = !tSelMode;
+  $('#tSelN').textContent = `已选 ${tSel.size}`;
+  $('#tAll').checked = list.length > 0 && list.every(t => tSel.has(t.id));
+  $('#tAll').indeterminate = !$('#tAll').checked && list.some(t => tSel.has(t.id));
+  $('#tOn').disabled = $('#tOff').disabled = !tSel.size;
+  if (!tSelMode) $('#tchips .tc.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 function setTerm(id, quiet) {
   if (!id || id === TID) return;
@@ -307,9 +452,51 @@ function setTerm(id, quiet) {
   switchHooks.forEach(fn => { try { fn(id); } catch (e) { console.error(e); } });
   renderTerms();
   if (!quiet) { const t = TERMS.find(x => x.id === id); toast(`已切换到终端 #${id}${t ? ' ' + t.phone : ''}`, 'info'); }
+  startStream();
   poll();
 }
-$('#tchips').onclick = e => { const b = e.target.closest('[data-term]'); if (b) setTerm(b.dataset.term); };
+$('#tchips').onclick = e => {
+  const b = e.target.closest('[data-term]');
+  if (!b) return;
+  if (tSelMode) { const id = b.dataset.term; tSel.has(id) ? tSel.delete(id) : tSel.add(id); renderTerms(); return; }
+  setTerm(b.dataset.term);
+};
+$('#tFilter').addEventListener('input', renderTerms);
+$('#tFilter').addEventListener('keydown', e => {
+  if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; renderTerms(); }
+  if (e.key === 'Enter' && !tSelMode) { const first = $('#tchips [data-term]'); if (first) setTerm(first.dataset.term); }
+});
+$('#tSel').onclick = () => {
+  tSelMode = !tSelMode;
+  if (!tSelMode) tSel.clear();
+  $('#tSel').setAttribute('aria-pressed', String(tSelMode));
+  $('#tSel').classList.toggle('on', tSelMode);
+  renderTerms();
+};
+$('#tAll').onchange = e => {
+  const q = $('#tFilter').value.trim().toLowerCase();
+  TERMS.filter(t => termMatch(t, q)).forEach(t => e.target.checked ? tSel.add(t.id) : tSel.delete(t.id));
+  renderTerms();
+};
+// 批量上线 / 断开：逐个调用各终端的动作接口
+async function batchConn(type, btn) {
+  const ids = TERMS.filter(t => tSel.has(t.id)).map(t => t.id);
+  if (!ids.length) return;
+  btn.disabled = true;
+  let ok = 0;
+  const errs = [];
+  await Promise.all(ids.map(async id => {
+    try {
+      const j = await fetchJSON(`api/t/${encodeURIComponent(id)}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) });
+      if (j.ok) ok++; else errs.push(`#${id} ${j.error || ''}`);
+    } catch (e) { errs.push(`#${id} ${e.message}`); }
+  }));
+  btn.disabled = false;
+  toast(`${type === 'connect' ? '上线' : '断开'} ${ok}/${ids.length} 个终端${errs.length ? '；失败：' + errs.slice(0, 3).join('，') : ''}`, errs.length ? 'err' : 'ok');
+  loadTerms();
+}
+$('#tOn').onclick = e => batchConn('connect', e.currentTarget);
+$('#tOff').onclick = e => batchConn('disconnect', e.currentTarget);
 async function termOp(op, extra = {}, btn) {
   if (btn) btn.disabled = true;
   try {
@@ -327,7 +514,11 @@ $('#tDel').onclick = async e => {
   if (await termOp('delete', { purge: 1 }, e.currentTarget)) { toast(`终端 #${t.id} 已删除`, 'ok'); setTerm(TERMS[0]?.id, true); }
 };
 setInterval(loadTerms, 2000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { poll(); loadTerms(); } });
+// 窗口隐藏时断开状态推送（与原先暂停轮询一致），回到前台重新订阅（先收到全量快照）
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { clearTimeout(streamRetry); if (stateES) { stateES.close(); stateES = null; } streamOK = false; }
+  else { startStream(); poll(); loadTerms(); }
+});
 
 // 程序版本（/api/version，构建时由 -ldflags 注入）
 async function loadVersion() {
@@ -352,4 +543,4 @@ document.addEventListener('click', async e => {
 
 window.addEventListener('DOMContentLoaded', () => {
   const h = location.hash.slice(1); // go('overview') 会清掉地址栏的 #，先记下深链接
-  loadVersion(); loadTerms(); go('overview'); if (h) go(h); poll(); });
+  loadVersion(); loadTerms(); go('overview'); if (h) go(h); poll(); startStream(); });

@@ -80,7 +80,7 @@ function renderScLib() {
 function renderScRuns() {
   const runs = SCEN?.runs || [];
   const running = runs.filter(r => r.status === 'running').length;
-  $('#navScen').hidden = !running; $('#navScen').textContent = running || '';
+  $('#navScen').hidden = !running && !scRec; $('#navScen').textContent = scRec ? '录' : running || '';
   if (page !== 'scenario') return;
   const t = TERMS.find(x => x.id === TID);
   $('#scTarget').textContent = t ? `未指定 terminal 时在当前终端 #${t.id} ${t.phone} 上运行` : '';
@@ -98,7 +98,7 @@ function renderScRuns() {
     const last = r.log.slice(-3).reverse().map(l => `<div>${l.t}s ${l.ok ? '✓' : '✕'} ${esc(l.text)}${l.error ? ' — ' + esc(l.error) : ''}</div>`).join('');
     return `<div class="sc-run"><div class="sc-run-h"><b>${esc(r.name)}</b><span class="tag ${esc(cls)}">${esc(st)}</span>
       <button class="lnk" data-term="${esc(r.terminal)}">终端 #${esc(r.terminal)} ${esc(r.phone)}</button><span class="grow"></span>
-      <span class="muted mono">${Math.min(r.step, r.total)}/${r.total} 步 · ${dur(r.elapsed * 1000)}${r.failures ? ` · 失败 ${r.failures}` : ''}</span></div>
+      <span class="muted mono">${Math.min(r.step, r.total)}/${r.total} 步 · ${dur(r.elapsed * 1000)}${r.failures ? ` · 失败 ${r.failures}` : ''}${r.asserts ? ` · 断言 ${r.asserts - r.assertFails}/${r.asserts} 通过` : ''}</span></div>
       <div class="fbar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div>
       ${r.error ? `<p class="hint err-text">${esc(r.error)}</p>` : ''}
       <ol class="sc-steps">${steps}</ol><div class="sc-log">${last}</div></div>`;
@@ -121,3 +121,69 @@ let scTick = 0;
 setInterval(() => { if (!document.hidden && (page === 'scenario' || (SCEN && SCEN.runs.some(r => r.status === 'running')) || ++scTick % 5 === 0)) pollScen(); }, 1000);
 onPage('scenario', pollScen);
 pollScen();
+
+// ---------------- 场景录制：记录页面上的操作，停止后生成场景脚本（YAML，可继续编辑 / 保存） ----------------
+// 只记录对终端状态有影响的动作；时间间隔写成 after（秒，保留一位小数）。录制状态记在本页（刷新后结束）
+const REC_SKIP = new Set(['setConfig', 'deleteArea', 'lockAlarm', 'stopStream', 'answer']);
+const REC_BIT = { setAlarm: 'alarm', setStatus: 'status', setVideoAlarm: 'videoAlarm', setSignal: 'signal', setIO: 'io' };
+let scRec = null;   // { term, started, last, steps: [] }
+function recStep(type, p) {
+  if (REC_SKIP.has(type)) return null;
+  const pick = (...ks) => Object.fromEntries(ks.filter(k => p[k] !== undefined && p[k] !== '').map(k => [k, p[k]]));
+  if (REC_BIT[type]) {
+    if (type === 'setAlarm' && !p.on) return { action: 'clearAlarm', bit: p.bit };
+    return { action: REC_BIT[type], bit: p.bit, on: p.on ? 1 : 0 };
+  }
+  switch (type) {
+    case 'connect': case 'disconnect': case 'report': case 'clearAlarms': case 'logout': return { action: type };
+    case 'setMotion': return p.mode ? { action: 'motion', ...pick('mode', 'speed') } : { action: 'speed', speed: p.speed };
+    case 'setPosition': return { action: 'position', lng: +p.lng, lat: +p.lat };
+    case 'send': return { action: 'send', msgId: String(p.msgId), ...(p.params && Object.keys(p.params).length ? { params: p.params } : {}) };
+    case 'raw': return { action: 'raw', line: p.line };
+    case 'setReplay': return { action: 'replay', ...p };
+    default: return { action: type, ...p };
+  }
+}
+// YAML 流式写法：每步一行 {k: v}；字符串统一加引号（JSON 字符串即合法 YAML）
+const yv = v => typeof v === 'string' ? JSON.stringify(v) : v && typeof v === 'object' ? '{' + Object.entries(v).map(([k, x]) => `${k}: ${yv(x)}`).join(', ') + '}' : String(v);
+function recYAML(r) {
+  const t = TERMS.find(x => x.id === r.term);
+  const lines = [`# 录制于 ${fmtDT(r.started)}，终端 #${r.term}${t ? ' ' + t.phone : ''}；after = 与上一步的间隔（秒）`,
+    `name: ${JSON.stringify('录制-' + new Date(r.started).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'))}`,
+    'terminal: ""', 'steps:'];
+  if (!r.steps.length) lines.push('  - {at: 0, action: log, text: "（录制期间没有操作）"}');
+  r.steps.forEach(st => lines.push('  - ' + yv(st)));
+  lines.push('  # 可在需要处加断言，例如：', '  # - {after: 0, action: expectDown, msgId: "8001", within: 5}', '  # - {action: expectBit, kind: alarm, bit: 0, on: true}');
+  return lines.join('\n') + '\n';
+}
+function syncRecBtn() {
+  const on = !!scRec;
+  $('#scRec').textContent = on ? `■ 停止录制（${scRec.steps.length} 步）` : '● 开始录制';
+  $('#scRec').classList.toggle('danger', on);
+  $('#scRec').setAttribute('aria-pressed', String(on));
+  document.documentElement.classList.toggle('recording', on);
+  $('#navScen').hidden = !on && !(SCEN?.runs || []).some(r => r.status === 'running');
+  if (on) $('#navScen').textContent = '录';
+}
+onAct((type, p) => {
+  if (!scRec || TID !== scRec.term) return;
+  const st = recStep(type, p || {});
+  if (!st) return;
+  const now = Date.now();
+  scRec.steps.push({ after: Math.round((now - scRec.last) / 100) / 10, ...st });
+  scRec.last = now;
+  syncRecBtn();
+});
+$('#scRec').onclick = () => {
+  if (!scRec) {
+    scRec = { term: TID, started: Date.now(), last: Date.now(), steps: [] };
+    toast(`开始录制终端 #${TID} 上的操作，完成后回到「场景脚本」点“停止录制”`, 'info');
+  } else {
+    const text = recYAML(scRec), n = scRec.steps.length;
+    scRec = null;
+    scSetText(text, '');
+    toast(`录制完成：${n} 步，已放入编辑框，可修改后保存到场景库`, 'ok');
+  }
+  syncRecBtn();
+};
+onSwitch(() => { if (scRec) { toast('已切换终端，录制只记录开始录制时的终端 #' + scRec.term, 'info'); } });

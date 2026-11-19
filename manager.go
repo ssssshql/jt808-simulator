@@ -6,7 +6,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,12 +33,13 @@ type registry struct {
 }
 
 type Manager struct {
-	mu    sync.Mutex
-	addMu sync.Mutex // 串行化新增/复制/删除，避免并发挑到同一个手机号
-	terms []*Terminal
-	def   string
-	next  int
-	saved []byte
+	mu     sync.Mutex
+	addMu  sync.Mutex // 串行化新增/复制/删除，避免并发挑到同一个手机号
+	terms  []*Terminal
+	def    string
+	next   int
+	saved  []byte
+	noSave bool // 命令行 -scenario：只在内存中管理终端，不写 terminals.json
 }
 
 func registryFile() string { return filepath.Join(stateDir, "terminals.json") }
@@ -46,11 +49,13 @@ func registryFile() string { return filepath.Join(stateDir, "terminals.json") }
 func NewManager(flags Config) *Manager {
 	m := &Manager{next: 1}
 	var reg registry
-	if b, err := os.ReadFile(registryFile()); err == nil {
-		if err := json.Unmarshal(b, &reg); err != nil {
+	if used, err := readJSONDurable(registryFile(), &reg); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
 			errf("读取 %s 失败: %v（按单终端启动）", registryFile(), err)
-			reg = registry{}
 		}
+		reg = registry{}
+	} else if used != registryFile() {
+		errf("终端清单 %s 损坏或缺失，已从备份恢复", registryFile())
 	}
 	seen := map[string]bool{}
 	for _, r := range reg.Terminals {
@@ -344,6 +349,9 @@ func (m *Manager) SetDefault(id string) error {
 
 // save 写终端清单（内容不变时不写）
 func (m *Manager) save() {
+	if m.noSave {
+		return
+	}
 	m.mu.Lock()
 	reg := registry{Default: m.def, NextID: m.next}
 	for _, t := range m.terms {
@@ -355,9 +363,9 @@ func (m *Manager) save() {
 	if same {
 		return
 	}
-	os.MkdirAll(stateDir, 0o755)
-	f := registryFile()
-	if os.WriteFile(f+".tmp", b, 0o644) == nil && os.Rename(f+".tmp", f) == nil {
+	if err := writeFileDurable(registryFile(), b); err != nil {
+		errf("保存终端清单失败: %v", err)
+	} else {
 		m.mu.Lock()
 		m.saved = b
 		m.mu.Unlock()

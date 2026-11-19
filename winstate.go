@@ -5,8 +5,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -31,12 +29,8 @@ func intersectW(a, b winRect) (int, int) {
 }
 
 func loadWindowState(path string) *WindowState {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
 	var ws WindowState
-	if json.Unmarshal(b, &ws) != nil || ws.W <= 0 || ws.H <= 0 {
+	if _, err := readJSONDurable(path, &ws); err != nil || ws.W <= 0 || ws.H <= 0 {
 		return nil
 	}
 	return &ws
@@ -48,11 +42,7 @@ func saveWindowState(path string, ws WindowState) error {
 	}
 	ws.Saved = time.Now().Format(time.RFC3339)
 	b, _ := json.MarshalIndent(ws, "", " ")
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	if err := os.WriteFile(path+".tmp", b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(path+".tmp", path)
+	return writeFileDurable(path, b)
 }
 
 // placeWindow 计算恢复后的窗口矩形：

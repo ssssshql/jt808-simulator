@@ -13,7 +13,7 @@ var areaKindName = map[int]string{1: "圆形区域", 2: "矩形区域", 3: "多�
 
 // parseAreaItem 解析一个区域项；loose=true 时按网关实际编码（条件字段无条件存在）
 func parseAreaItem(kind, ver int, r *reader, loose bool) Area {
-	start := r.p
+	start := r.c.Pos()
 	a := Area{Kind: kind, ID: r.u32(), Attr: r.u16()}
 	timeF := func() {
 		if a.Attr&1 != 0 || (loose && kind == 4) {
@@ -76,7 +76,7 @@ func parseAreaItem(kind, ver int, r *reader, loose bool) Area {
 		a.Name = r.wstr()
 	}
 	if r.err == nil {
-		a.Raw = hex.EncodeToString(r.b[start:r.p])
+		a.Raw = hex.EncodeToString(r.c.Slice(start, r.c.Pos()))
 	}
 	return a
 }

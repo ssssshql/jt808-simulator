@@ -76,7 +76,7 @@ type logStore struct {
 	active  bool // Start() 后才写盘（单元测试默认不写）
 }
 
-// Start 启用落盘（-web / 桌面版 / 命令行启动时调用）
+// Start 启用落盘（桌面版 / 命令行启动时调用）
 func (s *logStore) Start() {
 	s.mu.Lock()
 	s.active = true
@@ -103,9 +103,7 @@ func (s *logStore) loadLocked() {
 	}
 	s.loaded = true
 	s.set = LogSettings{Enabled: true}
-	if b, err := os.ReadFile(logSettingsFile()); err == nil {
-		json.Unmarshal(b, &s.set)
-	}
+	readJSONDurable(logSettingsFile(), &s.set)
 	s.set.normalize()
 }
 
@@ -121,8 +119,7 @@ func (s *logStore) SetSettings(n LogSettings) error {
 	}
 	b, _ := json.MarshalIndent(n, "", " ")
 	s.mu.Unlock()
-	os.MkdirAll(stateDir, 0o755)
-	if err := os.WriteFile(logSettingsFile(), b, 0o644); err != nil {
+	if err := writeFileDurable(logSettingsFile(), b); err != nil {
 		return err
 	}
 	s.prune()

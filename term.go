@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/rsa"
+	"jt808sim/internal/codec"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -29,14 +30,15 @@ type Config struct {
 	AutoReconnect bool              `json:"autoReconnect"`
 	AttachHost    string            `json:"attachHost"` // 覆盖 9208 下发的附件服务器 IP（为空用下发值）
 	AutoAttach    bool              `json:"autoAttach"`
-	UpRSA         bool              `json:"upRsa"`               // 上行RSA加密（需已收到平台 8A00 公钥）
-	Transport     string            `json:"transport,omitempty"` // tcp（默认）/ udp
-	Reply8500     string            `json:"reply8500,omitempty"` // 8500 应答方式：空 = 只回 0500；"ack0500" = 先回 0001 通用应答再回 0500
-	SafetyStd     string            `json:"safetyStd,omitempty"` // 主动安全标准：空 = 苏标 JSATL12（默认）；"gd" = 粤标 T/GDRTA 002-2020
-	MediaSrc      string            `json:"mediaSrc,omitempty"`  // 附件画面来源（全部通道默认）：空 = 合成测试图；image / video / camera（见 mediasrc.go）
-	MediaCh       map[string]string `json:"mediaCh,omitempty"`   // 按通道覆盖：键为通道号 64/65/66/67，值同上；未列的通道沿用 MediaSrc
-	NoStamp       bool              `json:"noStamp,omitempty"`   // 附件画面不烧时间水印（默认烧，见 stamp.go）
+	UpRSA         bool              `json:"upRsa"`                // 上行RSA加密（需已收到平台 8A00 公钥）
+	Transport     string            `json:"transport,omitempty"`  // tcp（默认）/ udp
+	Reply8500     string            `json:"reply8500,omitempty"`  // 8500 应答方式：空 = 只回 0500；"ack0500" = 先回 0001 通用应答再回 0500
+	SafetyStd     string            `json:"safetyStd,omitempty"`  // 主动安全标准：空 = 苏标 JSATL12（默认）；"gd" = 粤标 T/GDRTA 002-2020
+	MediaSrc      string            `json:"mediaSrc,omitempty"`   // 附件画面来源（全部通道默认）：空 = 合成测试图；image / video / camera（见 mediasrc.go）
+	MediaCh       map[string]string `json:"mediaCh,omitempty"`    // 按通道覆盖：键为通道号 64/65/66/67，值同上；未列的通道沿用 MediaSrc
+	NoStamp       bool              `json:"noStamp,omitempty"`    // 附件画面不烧时间水印（默认烧，见 stamp.go）
 	AutoAlarms    bool              `json:"autoAlarms,omitempty"` // 长时间行驶/停车时是否自动判定超速/疲劳/超时停车等报警（默认关闭）
+	BlindCap      int               `json:"blindCap,omitempty"`   // 盲区补报队列上限（条），0 = 默认 5000；超出时丢弃最旧的并告警
 }
 
 // transport 传输方式：udp 或 tcp（空/其它值按 tcp）
@@ -112,35 +114,37 @@ type Driver struct {
 
 // Saved 持久化部分
 type Saved struct {
-	Cfg       Config           `json:"cfg"`
-	Params    Params           `json:"params"`
-	Lng       float64          `json:"lng"`
-	Lat       float64          `json:"lat"`
-	Mileage   float64          `json:"mileage"` // km
-	Fuel      float64          `json:"fuel"`    // L
-	StatusOn  uint32           `json:"statusOn"`
-	Areas     []Area           `json:"areas"`
-	Phonebook []map[string]any `json:"phonebook"`
-	Events    map[int]string   `json:"events"`
-	Menus     map[int]string   `json:"menus"`
-	Inbox     []InboxItem      `json:"inbox"`
-	Media     []MediaItem      `json:"media"`
-	MediaSeq  int              `json:"mediaSeq"`
-	Driver    Driver           `json:"driver"`
-	Blind     []string         `json:"blind"` // 盲区位置体 hex
-	DayDrive  int              `json:"dayDrive"`
-	DayKey    string           `json:"dayKey"`
-	Rec       RecorderState    `json:"rec"`
-	ExtSignal uint32           `json:"extSignal"`           // 0x25 扩展车辆信号状态位
-	IOStatus  uint16           `json:"ioStatus"`            // 0x2A IO状态位
-	Analog    [2]int           `json:"analog"`              // 0x2B 模拟量 AD0 / AD1
-	RSAKey    string           `json:"rsaKey,omitempty"`    // 终端 RSA 私钥（PKCS#1 DER hex）
-	PlatRSA   PlatKey          `json:"platRsa"`             // 平台 RSA 公钥（8A00）
-	Replay    *Replay          `json:"replay,omitempty"`    // 导入的回放轨迹（GPX/CSV）
-	GD        GDState          `json:"gd"`                  // 粤标外设状态 / 异常信息 / 升级模拟
-	Tires     []int            `json:"tires,omitempty"`     // 0x05 胎压（2019），最多 30 个轮子，0~254
-	CabinTemp *int             `json:"cabinTemp,omitempty"` // 0x06 车厢温度（2019），℃
-	Motion    Motion           `json:"motion,omitempty"`    // 记住选中的运动模式与速度
+	Cfg         Config           `json:"cfg"`
+	Params      Params           `json:"params"`
+	Lng         float64          `json:"lng"`
+	Lat         float64          `json:"lat"`
+	Mileage     float64          `json:"mileage"` // km
+	Fuel        float64          `json:"fuel"`    // L
+	StatusOn    uint32           `json:"statusOn"`
+	Areas       []Area           `json:"areas"`
+	Phonebook   []map[string]any `json:"phonebook"`
+	Events      map[int]string   `json:"events"`
+	Menus       map[int]string   `json:"menus"`
+	Inbox       []InboxItem      `json:"inbox"`
+	Media       []MediaItem      `json:"media"`
+	MediaSeq    int              `json:"mediaSeq"`
+	Driver      Driver           `json:"driver"`
+	Blind       []string         `json:"blind"` // 盲区位置体 hex
+	DayDrive    int              `json:"dayDrive"`
+	DayKey      string           `json:"dayKey"`
+	Rec         RecorderState    `json:"rec"`
+	ExtSignal   uint32           `json:"extSignal"`             // 0x25 扩展车辆信号状态位
+	IOStatus    uint16           `json:"ioStatus"`              // 0x2A IO状态位
+	Analog      [2]int           `json:"analog"`                // 0x2B 模拟量 AD0 / AD1
+	RSAKey      string           `json:"rsaKey,omitempty"`      // 终端 RSA 私钥（PKCS#1 DER hex）
+	PlatRSA     PlatKey          `json:"platRsa"`               // 平台 RSA 公钥（8A00）
+	Replay      *Replay          `json:"replay,omitempty"`      // 导入的回放轨迹（GPX/CSV）
+	GD          GDState          `json:"gd"`                    // 粤标外设状态 / 异常信息 / 升级模拟
+	Tires       []int            `json:"tires,omitempty"`       // 0x05 胎压（2019），最多 30 个轮子，0~254
+	CabinTemp   *int             `json:"cabinTemp,omitempty"`   // 0x06 车厢温度（2019），℃
+	Motion      Motion           `json:"motion,omitempty"`      // 记住选中的运动模式与速度
+	AlarmLock   uint32           `json:"alarmLock,omitempty"`   // 手动锁定的报警位：锁定后不再由模拟器自动判定 / 平台确认改写
+	AlarmLockOn uint32           `json:"alarmLockOn,omitempty"` // 锁定位的取值
 }
 
 type Terminal struct {
@@ -154,6 +158,7 @@ type Terminal struct {
 	quit  chan struct{} // 关闭后 motionLoop / saveLoop 退出（删除终端时）
 	phone atomic.Value  // Cfg.Phone 副本（string），供管理器无锁读取
 	mgr   *Manager      // 多终端管理器（命令行单终端模式为 nil）
+	kick  stateKick     // 页面操作后通知状态推送立即刷新（statestream.go）
 
 	// 连接
 	conn       net.Conn
@@ -170,25 +175,28 @@ type Terminal struct {
 	waiters    map[string]chan *Msg
 	upCache    map[int][][]byte // 分包上行缓存：首包流水号 -> 各包帧
 	upOrder    []int
-	downParts  map[int]*partial
+	downParts  codec.Assembler
 	lastUp     time.Time
 	hostOver   string // 8105 控制连接时的临时服务器
 	portOver   int
 
 	// 运动与报警
-	motion    Motion
-	speed     float64
-	dir       float64
-	alt       int
-	sats      int
-	signal    int
-	track     [][2]float64
-	alarmMan  uint32 // 手动置位
-	alarmAuto uint32 // 自动判定
-	alarmClr  uint32 // 8203/8001 确认后清除（直到条件消失）
-	videoMan  uint32
-	nextRpt   time.Time
-	lastRpt   struct {
+	motion       Motion
+	speed        float64
+	dir          float64
+	alt          int
+	sats         int
+	signal       int
+	track        [][2]float64
+	alarmMan     uint32    // 手动置位
+	alarmAuto    uint32    // 自动判定
+	alarmClr     uint32    // 8203/8001 确认后清除（直到条件消失）
+	blindDropped int       // 盲区队列满后累计丢弃的条数（本次运行）
+	downSeen     []downRec // 最近收到的下行消息（场景断言 expectDown）
+	blindWarnAt  time.Time // 上次输出盲区丢弃告警的时间（限频）
+	videoMan     uint32
+	nextRpt      time.Time
+	lastRpt      struct {
 		lng, lat, dir float64
 		status, alarm uint32
 	}
@@ -235,7 +243,7 @@ var stateDir = "state"
 
 func NewTerminal(cfg Config) *Terminal {
 	t := &Terminal{hub: newHub(), quit: make(chan struct{}), status: "offline", replyMode: "auto", pending: map[int]*pend{}, waiters: map[string]chan *Msg{},
-		upCache: map[int][][]byte{}, downParts: map[int]*partial{}, inArea: map[int]bool{}, streams: map[int]*avStream{},
+		upCache: map[int][][]byte{}, downParts: codec.Assembler{}, inArea: map[int]bool{}, streams: map[int]*avStream{},
 		ftpCtl: map[int]chan int{}, lastPhoto: map[int]time.Time{}, segIn: map[int]*segVisit{}, adasPending: map[string]adasAlarm{}, sats: 12, signal: 25, alt: 20}
 	t.Params = defaultParams()
 	t.Lng, t.Lat, t.Mileage, t.Fuel = 113.324520, 23.106470, 12345.6, 80

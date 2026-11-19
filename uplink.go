@@ -33,6 +33,8 @@ func pint(p map[string]any, k string, def int) int {
 	switch v := p[k].(type) {
 	case float64:
 		return int(v)
+	case int: // Go 代码直接构造的参数（场景、测试）
+		return v
 	case string:
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 			return n

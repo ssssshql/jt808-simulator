@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (t *Terminal) Do(typ string, p map[string]any) error {
@@ -94,12 +95,23 @@ func (t *Terminal) Do(typ string, p map[string]any) error {
 		t.mu.Unlock()
 	case "report":
 		t.reportNow()
+	case "lockAlarm": // {bit, lock: 1|0, on?: 1|0}
+		var on *bool
+		if _, ok := p["on"]; ok {
+			v := pint(p, "on", 0) == 1
+			on = &v
+		}
+		return t.lockAlarm(pint(p, "bit", -1), pint(p, "lock", 1) == 1, on)
 	case "setStatus", "setAlarm", "setVideoAlarm":
 		return t.setBit(typ, pint(p, "bit", -1), pint(p, "on", 0) == 1)
 	case "clearAlarms":
 		t.mu.Lock()
 		t.alarmMan, t.videoMan, t.pendEvt = 0, 0, 0
 		t.alarmClr |= t.alarmAuto
+		if t.AlarmLockOn != 0 { // 锁定的位清为“锁定为清除”，锁定本身保留
+			t.AlarmLockOn = 0
+			t.markDirty()
+		}
 		t.contDrive, t.parkSec, t.overSec = 0, 0, 0
 		t.mu.Unlock()
 		t.reportNow()
@@ -329,6 +341,12 @@ func (t *Terminal) setConfig(p map[string]any) error {
 	if _, ok := p["port"]; ok {
 		c.Port = pint(p, "port", c.Port)
 	}
+	if _, ok := p["blindCap"]; ok {
+		c.BlindCap = pint(p, "blindCap", 0)
+		if c.BlindCap != 0 && (c.BlindCap < minBlindCap || c.BlindCap > maxBlindCap) {
+			return fmt.Errorf("盲区队列上限需在 %d~%d 之间（0 = 默认 %d）", minBlindCap, maxBlindCap, defaultBlindCap)
+		}
+	}
 	if _, ok := p["plateColor"]; ok {
 		c.PlateColor = pint(p, "plateColor", c.PlateColor)
 	}
@@ -367,6 +385,10 @@ func (t *Terminal) setConfig(p map[string]any) error {
 		c = cur
 	}
 	t.Cfg = c
+	if warn := t.trimBlind(); warn != "" { // 调小上限时立即裁剪
+		t.blindWarnAt = time.Time{}
+		t.logf("%s", warn)
+	}
 	if stdChanged {
 		t.gdSwitchParams(c.yue())
 		t.logf("主动安全标准切换为 %s", c.stdName())
@@ -401,6 +423,10 @@ func (t *Terminal) setBit(typ string, bit int, on bool) error {
 		t.markDirty()
 	case "setAlarm":
 		flip(&t.alarmMan)
+		if t.AlarmLock&(1<<bit) != 0 { // 锁定的位：手动切换同时改锁定值
+			flip(&t.AlarmLockOn)
+			t.markDirty()
+		}
 		if on {
 			t.alarmClr &^= 1 << bit
 		}

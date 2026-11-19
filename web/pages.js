@@ -27,7 +27,13 @@ function renderRing(s) {
 const OV_STATUS = [0, 1, 4, 10, 11, 12, 13, 15, 18, 19];
 const OV_ALARM = [0, 1, 2, 3, 5, 7, 8, 13, 14, 20, 29];
 const OV_SHORT = { 3: '危险驾驶', 4: 'GNSS 故障', 5: '天线未接/剪断', 6: '天线短路' };
-const COMPUTED = new Set([1, 2, 3, 22]);   // 状态位中由模拟器根据位置/速度计算的位
+const COMPUTED = new Set([1, 2, 3, 22]);   // 状态位中由模拟器根据位置/速度计算的位（后端 Bit.auto 也会标出）
+const AUTO_TIP = '由模拟器自动判定';
+// 位的提示文本：自动判定 / 已锁定
+function bitTip(b, ro) {
+  return `bit${b.bit} ${b.name}${ro ? '（模拟器根据位置/速度计算，不能手动设置）' : b.locked ? '（已锁定为手动值，不再自动判定）' : b.auto ? '（' + AUTO_TIP + '；可在「状态与报警」锁定）' : ''}`;
+}
+const autoIc = b => b.auto && !b.locked ? `<i class="auto-ic" aria-hidden="true"></i>` : b.locked ? `<i class="lock-ic" aria-hidden="true"></i>` : '';
 function chips(sel, bits, pick, type, short) {
   const list = bits.filter(b => pick.includes(b.bit) || b.on);
   const sig = type + JSON.stringify(list);
@@ -35,16 +41,16 @@ function chips(sel, bits, pick, type, short) {
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
   el.innerHTML = list.map(b => {
-    const ro = type === 'setStatus' && COMPUTED.has(b.bit);
+    const ro = type === 'setStatus' && (COMPUTED.has(b.bit) || b.auto);
     const name = short ? OV_SHORT[b.bit] || b.name.replace(/报警$/, '') || b.name : b.name;
-    return `<button class="${b.on ? 'x' : ''} ${ro ? 'ro' : ''}" title="bit${b.bit} ${esc(b.name)}${ro ? '（模拟器自动计算）' : ''}" data-type="${type}" data-bit="${b.bit}" data-on="${b.on ? 0 : 1}" ${ro ? 'disabled' : ''}>${esc(name)}</button>`;
+    return `<button class="${b.on ? 'x' : ''} ${ro ? 'ro' : ''}" title="${esc(bitTip(b, ro))}" aria-pressed="${b.on}" data-type="${type}" data-bit="${b.bit}" data-on="${b.on ? 0 : 1}" ${ro ? 'disabled' : ''}>${autoIc(b)}${esc(name)}</button>`;
   }).join('');
 }
 
 // 快捷上行：无字段的直接发送，有字段的打开“上行报文”并选中
 const QUICK = [['0002', '终端心跳'], ['0301', '事件报告'], ['0702', '驾驶员信息'], ['0704', '批量位置'], ['0800', '多媒体事件'], ['0900', '透传上行'], ['0108', '升级结果']];
 $('#ups').innerHTML = QUICK.map(([id, n]) => `<button data-quick="${id}"><b>${id}</b><span>${n}</span></button>`).join('') +
-  '<button class="go" data-act="report"><b>0200</b><span>立即上报</span></button>';
+  '<button class="go" data-act="report"><b>0200</b><span>立即上报</span></button>';   // 主操作：蓝色
 $('#ups').addEventListener('click', e => {
   const b = e.target.closest('[data-quick]');
   if (!b) return;
@@ -82,7 +88,7 @@ function renderOverview(s) {
 
   $$('#replySeg button').forEach(b => b.classList.toggle('x', b.dataset.r === s.reply.mode));
   setVal('replyDelay', s.reply.delay);
-  const rk = [['待确认 / 重传', `${k.pendingAcks} / ${k.retrans}`], ['盲区缓存', k.blindQueue + ' 条'], ['重连次数', c.reconnects],
+  const rk = [['待确认 / 重传', `${k.pendingAcks} / ${k.retrans}`], ['盲区缓存', `${k.blindQueue}/${k.blindCap} 条${k.blindDropped ? `（丢弃 ${k.blindDropped}）` : ''}`], ['重连次数', c.reconnects],
     ['RSA', s.rsa.platKey ? (s.rsa.upEncrypt ? '上行加密' : '已获平台公钥') : '未启用'], ['鉴权码', c.token || '无']];
   const rkSig = JSON.stringify(rk);
   if (rkSig !== renderOverview.rkSig) {
@@ -90,17 +96,82 @@ function renderOverview(s) {
     $('#replyKV').innerHTML = rk.map(([a, v]) => `<div><span>${a}</span><b class="mono">${esc(v)}</b></div>`).join('');
   }
 
+  renderInbox(s);
+  renderGuide(s);
+}
+
+// ---------- 平台下发（日志卡片里的标签页，带未读角标） ----------
+let logTab = 'log';
+const seenKey = () => 'jt808.inboxSeen.' + TID;
+function setLogTab(t) {
+  logTab = t;
+  const inbox = t === 'inbox';
+  $('#tabLog').classList.toggle('on', !inbox); $('#tabLog').setAttribute('aria-selected', String(!inbox));
+  $('#tabInbox').classList.toggle('on', inbox); $('#tabInbox').setAttribute('aria-selected', String(inbox));
+  $('#log').hidden = inbox; $('#inbox').hidden = !inbox;
+  $('.lt-log').hidden = inbox; $('.lt-inbox').hidden = !inbox;
+  if (inbox) markInboxRead();
+  if (S) { renderInbox(S); renderGuide(S); }
+}
+function markInboxRead() {
+  if (!S || !S.inbox.length) return;
+  localStorage.setItem(seenKey(), String(Math.max(...S.inbox.map(m => m.seq || 0))));
+}
+$('#tabLog').onclick = () => setLogTab('log');
+$('#tabInbox').onclick = () => setLogTab('inbox');
+$('.ltabs').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  setLogTab(logTab === 'log' ? 'inbox' : 'log');
+  (logTab === 'log' ? $('#tabLog') : $('#tabInbox')).focus();
+});
+$('#inboxRead').onclick = () => { markInboxRead(); S && renderInbox(S); };
+onSwitch(() => setLogTab('log'));
+function renderInbox(s) {
+  if (logTab === 'inbox' && !document.hidden) markInboxRead();
+  const seen = +(localStorage.getItem(seenKey()) || 0);
+  const unread = s.inbox.filter(m => (m.seq || 0) > seen).length, ask = s.inbox.some(m => m.answers && !m.answered);
+  const badge = $('#inboxBadge');
+  badge.hidden = !unread && !ask;
+  badge.textContent = unread || '!';
+  badge.classList.toggle('info', !ask);
+  badge.title = ask ? '有待回答的提问' : `${unread} 条未读`;
+  $('#tabInbox').setAttribute('aria-label', `平台下发${unread ? `，${unread} 条未读` : ''}${ask ? '，有待回答的提问' : ''}`);
   $('#inboxN').textContent = s.inbox.length ? s.inbox.length + ' 条' : '';
+  $('#inboxRead').hidden = !unread;
   const sig = JSON.stringify(s.inbox.slice(0, 60));
-  if (sig !== renderOverview.sig) {
-    renderOverview.sig = sig;
-    $('#inbox').innerHTML = s.inbox.slice(0, 60).map(m => `<div class="ib k-${m.kind} ${m.answers && !m.answered ? 'q' : ''}"><span class="ic">${KIND_ICON[m.kind] || '下发'}</span><div class="b">
+  if (sig === renderInbox.sig) return;
+  renderInbox.sig = sig;
+  $('#inbox').innerHTML = s.inbox.slice(0, 60).map(m => `<div class="ib k-${m.kind} ${m.answers && !m.answered ? 'q' : ''}"><span class="ic">${KIND_ICON[m.kind] || '下发'}</span><div class="b">
       <div class="h"><b>${esc(m.title)}</b><span class="tm mono">${fmtT(m.t)}</span></div>${m.content ? `<p>${esc(m.content)}</p>` : ''}
       ${m.answers && !m.answered ? `<div class="ans">${m.answers.map(a => `<button data-ans="${a.id}" data-serial="${m.serial}">${a.id} ${esc(a.text)}</button>`).join('')}</div>` : ''}
       ${m.answered ? '<p><span class="tag ok">已回答</span></p>' : ''}</div></div>`).join('')
-      || '<div class="empty">平台下发的文本、提问、控制、参数设置等会显示在这里</div>';
-  }
+    || '<div class="empty-sm">暂无平台下发。文本、提问、控制、参数设置等指令会显示在这里</div>';
 }
+onSwitch(() => { renderInbox.sig = ''; });
+
+// ---------- 首次使用引导：离线且还没有任何报文时，在日志区就地填写网关与手机号并上线 ----------
+function renderGuide(s) {
+  const c = s.conn, k = s.counters;
+  const show = logTab === 'log' && c.status === 'offline' && !k.up && !k.down;
+  const g = $('#ovGuide');
+  if (g.hidden !== !show) { g.hidden = !show; $('#log').classList.toggle('dim', show); }
+  if (!show) return;
+  setVal('gHost', c.host); setVal('gPort', c.port); setVal('gPhone', c.phone);
+  $('#gHint').firstChild.textContent = c.lastError ? `上次连接失败：${c.lastError}。` : '更多选项（协议版本、UDP、鉴权码、车牌…）在 ';
+}
+['gHost', 'gPort', 'gPhone'].forEach(id => $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') $('#gGo').click(); }));
+$('#gGo').onclick = async e => {
+  const host = $('#gHost').value.trim(), port = +$('#gPort').value, phone = $('#gPhone').value.trim();
+  if (!host) { toast('请填写网关地址'); $('#gHost').focus(); return; }
+  if (!(port >= 1 && port <= 65535)) { toast('端口范围 1~65535'); $('#gPort').focus(); return; }
+  if (!/^\d{1,20}$/.test(phone)) { toast('终端手机号只能是数字（最多 20 位）'); $('#gPhone').focus(); return; }
+  const c = S && S.conn;
+  if (!c || c.host !== host || c.port !== port || c.phone !== phone) {
+    if (!(await act('setConfig', { host, port, phone }, e.currentTarget))) return;
+    loadTerms();
+  }
+  act('connect', {}, e.currentTarget, '正在上线…');
+};
 onState(renderOverview);
 onPage('overview', () => S && renderOverview(S));
 $('#replySeg').onclick = e => { const b = e.target.closest('[data-r]'); if (b) act('setReply', { mode: b.dataset.r }, null, '应答策略：' + b.firstChild.textContent); };
@@ -195,11 +266,21 @@ function renderBits(sel, bits, type) {
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
   el.innerHTML = bits.map(b => {
-    const ro = type === 'setStatus' && COMPUTED.has(b.bit);
-    return `<button class="bit ${b.on ? 'on' : ''} ${ro ? 'ro' : ''}" title="bit${b.bit} ${esc(b.name)}${ro ? '（模拟器自动计算）' : ''}"
-      data-type="${type}" data-bit="${b.bit}" data-on="${b.on ? 0 : 1}" ${ro ? 'disabled' : ''}><span class="n">${b.bit}</span><span class="t">${esc(b.name)}</span></button>`;
+    const ro = type === 'setStatus' && (COMPUTED.has(b.bit) || b.auto);
+    const btn = `<button class="bit ${b.on ? 'on' : ''} ${ro ? 'ro' : ''} ${b.locked ? 'locked' : ''}" title="${esc(bitTip(b, ro))}" aria-pressed="${b.on}"
+      data-type="${type}" data-bit="${b.bit}" data-on="${b.on ? 0 : 1}" ${ro ? 'disabled' : ''}><span class="n">${b.bit}</span><span class="t">${esc(b.name)}</span>${ro ? `<i class="auto-ic" title="${AUTO_TIP}" aria-hidden="true"></i>` : ''}</button>`;
+    if (type !== 'setAlarm' || !b.auto) return btn;
+    // 自动判定的报警位：右侧锁定按钮（锁定后保持手动值，不被模拟器改写）
+    const lk = b.locked ? '解锁：恢复由模拟器自动判定' : '锁定为当前值：不再由模拟器自动判定';
+    return `<div class="bitw ${b.locked ? 'locked' : ''}">${btn}<button class="bit-lock" data-lock="${b.bit}" data-locked="${b.locked ? 1 : 0}" aria-pressed="${!!b.locked}" aria-label="${esc(b.name)}：${lk}" title="${lk}">${b.locked ? '<i class="lock-ic"></i>' : `<i class="auto-ic" title="${AUTO_TIP}"></i>`}</button></div>`;
   }).join('');
 }
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-lock]');
+  if (!b) return;
+  const lock = b.dataset.locked !== '1';
+  act('lockAlarm', { bit: +b.dataset.lock, lock: lock ? 1 : 0 }, b, lock ? '已锁定，模拟器不再自动判定该位' : '已解锁，恢复自动判定');
+});
 const word = bits => bits.reduce((v, b) => v + (b.on ? 2 ** b.bit : 0), 0);
 function renderBitsPage(s) {
   renderBits('#bStatus', s.status, 'setStatus');
@@ -442,6 +523,8 @@ $('#cfgBehave').innerHTML = `
   <label class="switch"><input type="checkbox" id="b_autoReconnect"><span></span>断线自动重连（2s→60s 退避，主服务器失败 3 次后交替尝试备份服务器）</label>
   <label class="switch"><input type="checkbox" id="b_autoAlarms"><span></span>长时间运行自动触发报警（超速、疲劳驾驶、超时驾驶/停车）</label>
   <label class="switch"><input type="checkbox" id="b_autoAttach"><span></span>收到 9208 自动上传报警附件</label>
+  <div class="field"><label class="lbl" for="b_blindCap">盲区补报队列上限</label><div class="field-row"><div class="input-unit" style="width:180px"><input id="b_blindCap" type="number" min="10" max="100000" step="100"><span>条</span></div><button class="btn sm" id="b_blindSet">应用</button><span class="muted" id="b_blindInfo"></span></div>
+    <span class="muted">离线或 0200 重传失败的位置先存入队列，上线后以 0704 补报；超出上限丢弃最旧的并告警（默认 5000，范围 10~100000）</span></div>
   <div class="field"><label class="lbl" for="c_attachHost">附件服务器 IP 覆盖</label><input id="c_attachHost" data-cfg="attachHost" placeholder="为空时使用 9208 下发地址"></div>
   <label class="switch"><input type="checkbox" id="b_upRsa"><span></span>上行 RSA 加密（消息体属性 bit10，用平台 8A00 公钥加密）</label>
   <span class="muted" id="rsaNote"></span>
@@ -455,6 +538,12 @@ for (const k of ['autoReconnect', 'autoAlarms', 'autoAttach', 'upRsa'])
   $('#b_' + k).onchange = e => act('setConfig', { [k]: e.target.checked ? 1 : 0 }, null, '已保存');
 $('#b_reply').onchange = e => act('setReply', { mode: e.target.value }, null, '应答策略已切换');
 $('#b_delay').onchange = e => act('setReply', { delay: e.target.value }, null, '应答延迟已设置');
+$('#b_blindSet').onclick = e => {
+  const v = +$('#b_blindCap').value;
+  if (!(v >= 10 && v <= 100000)) { toast('盲区队列上限范围 10~100000'); return; }
+  act('setConfig', { blindCap: v }, e.target, '盲区队列上限已设为 ' + v + ' 条');
+};
+$('#b_blindCap').addEventListener('keydown', e => { if (e.key === 'Enter') $('#b_blindSet').click(); });
 $('#b_reply8500').onchange = e => act('setConfig', { reply8500: e.target.value }, null, '8500 应答方式已保存');
 
 const ALL_CFG = CFG_CONN.concat(CFG_DEV, [['attachHost']]);
@@ -530,6 +619,9 @@ function renderConfig(s, force) {
   $('#rsaNote').textContent = s.rsa.platKey ? '已收到平台 RSA 公钥。' : '尚未收到平台 8A00 公钥：开启后在收到公钥前仍以明文发送。';
   $('#b_reply').value = s.reply.mode; setVal('b_delay', s.reply.delay);
   if (!editing.has('b_reply8500')) $('#b_reply8500').value = c.reply8500 || '0500';
+  setVal('b_blindCap', s.counters.blindCap);
+  $('#b_blindInfo').textContent = `当前 ${s.counters.blindQueue} 条${s.counters.blindDropped ? `，本次运行已丢弃 ${s.counters.blindDropped} 条` : ''}`;
+  $('#b_blindInfo').classList.toggle('warn-text', s.counters.blindDropped > 0);
   DRV.forEach(([k]) => setVal('d_' + k, s.driver[k]));
   REC.forEach(([k]) => setVal('r_' + k, s.rec[k]));
 }

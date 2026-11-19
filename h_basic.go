@@ -27,13 +27,16 @@ func init() {
 	responseHandlers[0x8800] = (*Terminal).h8800
 }
 
-func (t *Terminal) h8103(m *Msg) {
-	r := newReader(m.Body)
+// paramItem 8103 设置参数中的一项（参数 ID + 原始值）
+type paramItem struct {
+	id  int
+	raw []byte
+}
+
+// parse8103 解析 8103 设置终端参数：参数总数 BYTE + 参数项列表（DWORD ID + BYTE 长度 + 值）
+func parse8103(body []byte) ([]paramItem, error) {
+	r := newReader(body)
 	n := r.u8()
-	type paramItem struct {
-		id  int
-		raw []byte
-	}
 	var items []paramItem
 	for i := 0; i < n && r.err == nil; i++ {
 		id := r.u32()
@@ -43,7 +46,12 @@ func (t *Terminal) h8103(m *Msg) {
 		}
 		items = append(items, paramItem{id: id, raw: raw})
 	}
-	if r.err != nil {
+	return items, r.err
+}
+
+func (t *Terminal) h8103(m *Msg) {
+	items, err := parse8103(m.Body)
+	if err != nil {
 		t.ack(m, 2)
 		return
 	}

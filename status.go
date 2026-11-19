@@ -4,14 +4,17 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"time"
 )
 
 type Bit struct {
-	Bit  int    `json:"bit"`
-	Name string `json:"name"`
-	On   bool   `json:"on"`
+	Bit    int    `json:"bit"`
+	Name   string `json:"name"`
+	On     bool   `json:"on"`
+	Auto   bool   `json:"auto,omitempty"`   // 由模拟器自动判定 / 计算
+	Locked bool   `json:"locked,omitempty"` // 已手动锁定（不再自动判定）
 }
 
 var statusNames = map[int]string{0: "ACC 开", 1: "已定位", 2: "南纬", 3: "西经", 4: "停运", 5: "经纬度已加密",
@@ -40,6 +43,10 @@ var extSignalNames = map[int]string{0: "近光灯", 1: "远光灯", 2: "右转�
 // 0x2A IO 状态位（表 32）
 var ioNames = map[int]string{0: "深度休眠", 1: "休眠"}
 
+// 由模拟器自动判定的报警位：超速、疲劳、超速预警、疲劳预警、违规行驶、当天累计驾驶超时、超时停车、
+// 进出区域、进出路线、路段行驶时间不足/过长（见 motion.go evalAlarms、areas.go）。可在页面上手动锁定
+const alarmAutoBits uint32 = 1<<1 | 1<<2 | 1<<13 | 1<<14 | 1<<15 | 1<<18 | 1<<19 | 1<<20 | 1<<21 | 1<<22
+
 // 收到平台确认后清零的报警位（其余报警维持至条件解除）
 const confirmMask uint32 = 1<<0 | 1<<3 | 1<<20 | 1<<21 | 1<<22 | 1<<27 | 1<<28
 
@@ -47,7 +54,7 @@ func bits(names map[int]string, v uint32) []Bit {
 	var out []Bit
 	for i := 0; i < 32; i++ {
 		if n, ok := names[i]; ok {
-			out = append(out, Bit{i, n, v&(1<<i) != 0})
+			out = append(out, Bit{Bit: i, Name: n, On: v&(1<<i) != 0})
 		}
 	}
 	return out
@@ -71,8 +78,67 @@ func (t *Terminal) statusWord() uint32 {
 	return s
 }
 
+// alarmWord 报警标志：手动置位 | 自动判定（未被确认清除）；锁定的位固定取锁定值；再去掉 0x0050 屏蔽字
 func (t *Terminal) alarmWord() uint32 {
-	return (t.alarmMan | t.alarmAuto) &^ t.alarmClr &^ uint32(t.Params.Int(0x0050))
+	w := (t.alarmMan | t.alarmAuto) &^ t.alarmClr
+	w = w&^t.AlarmLock | t.AlarmLockOn&t.AlarmLock
+	return w &^ uint32(t.Params.Int(0x0050))
+}
+
+// alarmBits 页面用的报警位列表：附带“自动判定”“已锁定”标记
+func (t *Terminal) alarmBits() []Bit {
+	list := bits(alarmNames, t.alarmWord())
+	for i := range list {
+		m := uint32(1) << list[i].Bit
+		list[i].Auto = alarmAutoBits&m != 0
+		list[i].Locked = t.AlarmLock&m != 0
+	}
+	return list
+}
+
+// statusBits 页面用的状态位列表：由模拟器计算的位标记 auto
+func (t *Terminal) statusBits() []Bit {
+	list := bits(statusNames, t.statusWord())
+	for i := range list {
+		list[i].Auto = statusComputed&(1<<list[i].Bit) != 0
+	}
+	return list
+}
+
+// lockAlarm 锁定 / 解锁报警位。锁定时取值为 on（nil = 保持当前取值）；
+// 解锁时把锁定的取值交还手动位，之后自动判定重新生效。调用方不持有 t.mu
+func (t *Terminal) lockAlarm(bit int, lock bool, on *bool) error {
+	if alarmNames[bit] == "" {
+		return fmt.Errorf("无效的报警位 %d", bit)
+	}
+	m := uint32(1) << bit
+	t.mu.Lock()
+	cur := t.alarmWord()&m != 0
+	if on != nil {
+		cur = *on
+	}
+	if lock {
+		t.AlarmLock |= m
+		if cur {
+			t.AlarmLockOn |= m
+		} else {
+			t.AlarmLockOn &^= m
+		}
+		t.logf("报警位 %d「%s」已锁定为%s，不再自动判定", bit, alarmNames[bit], map[bool]string{true: "置位", false: "清除"}[cur])
+	} else {
+		if t.AlarmLockOn&m != 0 {
+			t.alarmMan |= m
+		} else {
+			t.alarmMan &^= m
+		}
+		t.AlarmLock &^= m
+		t.AlarmLockOn &^= m
+		t.logf("报警位 %d「%s」已解锁，恢复自动判定", bit, alarmNames[bit])
+	}
+	t.markDirty()
+	t.mu.Unlock()
+	t.reportNow()
+	return nil
 }
 
 func (t *Terminal) videoWord() uint32 {

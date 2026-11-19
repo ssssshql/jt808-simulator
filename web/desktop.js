@@ -1,5 +1,5 @@
 // 桌面版（Wails / WebView2 无边框窗口）：自绘标题栏的拖动、双击最大化、窗口按钮与边缘缩放。
-// 只在 WebView2 中生效（window.chrome.webview）；普通浏览器打开 -web 页面时不显示窗口按钮。
+// 只在 WebView2 中生效（window.chrome.webview）；在普通浏览器中打开页面（开发调试）时不显示窗口按钮。
 'use strict';
 (() => {
   const wv = window.chrome && window.chrome.webview;

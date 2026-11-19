@@ -1,5 +1,5 @@
 # 推送 / PR：测试 + 构建 Windows 桌面版（产物可在 Actions 页下载）
-# 推送 v* tag：额外打安装包与免安装 zip，并创建 GitHub Release
+# 推送 v* tag：额外打安装包与免安装 zip，并创建 GitHub Release（说明 = CHANGELOG.md 对应一节 + 提交记录 + 自动生成的 Full Changelog）
 name: build
 
 on:
@@ -81,6 +81,7 @@ jobs:
           makensis -V2 -INPUTCHARSET UTF8 -DVERSION="${V#v}" -DSRC="$PWD/dist/jt808sim.exe" -DOUT="$PWD/dist/jt808sim-${V}-windows-x64-setup.exe" build/installer.nsi
           (cd dist && zip -q "jt808sim-${V}-windows-x64-portable.zip" jt808sim.exe jt808sim-cli.exe)
           (cd dist && sha256sum *setup.exe *.zip > SHA256SUMS && cat SHA256SUMS)
+      # 可选：仓库未配置 MINISIGN_KEY 时整步跳过（当前未启用），Release 只带 SHA256SUMS；启用方法见 README「CI/CD」
       - name: minisign 签名（配置了 MINISIGN_KEY secret 时）
         env:
           # 仓库 Settings → Secrets 里配置 MINISIGN_KEY（无密码的 minisign 私钥全文，
@@ -97,6 +98,28 @@ jobs:
           done
           rm -f /tmp/minisign.key
           ls -l *.minisig
+      - name: 更新说明（CHANGELOG.md 对应版本 + 上一个 tag 以来的提交）
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          V="${GITHUB_REF_NAME}"
+          PREV="$(git describe --tags --abbrev=0 "${V}^" 2>/dev/null || true)"
+          {
+            # CHANGELOG.md 中标题为「## <tag>（日期）」或「## <tag>」的一节（没有则为空）
+            if [ -f CHANGELOG.md ]; then
+              awk -v v="$V" '/^## /{ if (f) exit; t=$2; sub(/（.*/, "", t); if (t == v) { f=1; next } } f' CHANGELOG.md
+            fi
+            echo
+            if [ -n "$PREV" ]; then
+              echo "### 提交记录（${PREV} → ${V}）"
+              git log --no-merges --pretty='- %s (%h)' "${PREV}..${V}"
+            else
+              echo "### 提交记录"
+              git log --no-merges --pretty='- %s (%h)' -n 50 "${V}"
+            fi
+            echo
+            echo "> 校验：安装包与 zip 的 SHA256 见 SHA256SUMS。minisign 签名（.minisig）仅在仓库配置了 MINISIGN_KEY 时提供，未配置时程序内更新只校验 SHA256。"
+          } > dist/RELEASE_NOTES.md
+          cat dist/RELEASE_NOTES.md
       - uses: actions/upload-artifact@v4
         with:
           name: jt808sim-${{ steps.v.outputs.version }}-windows-x64
@@ -110,6 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.v.outputs.version }}
+          body_path: dist/RELEASE_NOTES.md
           generate_release_notes: true
           files: |
             dist/*setup.exe

@@ -1,289 +1,49 @@
 package main
 
-// JT/T 808 帧编解码 + 常用消息体构造（2013 / 2019 双版本）
+// JT/T 808 帧编解码 + 常用消息体构造（2013 / 2019 双版本）。
+// 帧层（转义、校验、消息头、分包、BCD、GBK、切帧、分包重组）实现在 internal/codec，这里保留包内别名。
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"strings"
-	"time"
 
-	"golang.org/x/text/encoding/simplifiedchinese"
+	"jt808sim/internal/codec"
 )
 
 const (
-	V2013 = 0 // 6 字节 BCD 手机号
-	V2019 = 1 // 10 字节 BCD 手机号 + 协议版本号
+	V2013 = codec.V2013 // 6 字节 BCD 手机号
+	V2019 = codec.V2019 // 10 字节 BCD 手机号 + 协议版本号
 )
 
-func gbk(s string) []byte {
-	b, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(s))
-	if err != nil {
-		return []byte(s)
-	}
-	return b
-}
+type (
+	Msg         = codec.Msg
+	FrameReader = codec.FrameReader
+)
 
-func ungbk(b []byte) string {
-	s, err := simplifiedchinese.GBK.NewDecoder().Bytes(b)
-	if err != nil {
-		return string(b)
-	}
-	return string(s)
-}
-
-// bcd 数字串 -> 定长 BCD（左补 0，非十六进制字符按 0 处理，确保返回精确 n 字节）
-func bcd(s string, n int) []byte {
-	var clean strings.Builder
-	clean.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
-			clean.WriteByte(c)
-		} else {
-			clean.WriteByte('0')
-		}
-	}
-	s = clean.String()
-	if len(s) < n*2 {
-		s = strings.Repeat("0", n*2-len(s)) + s
-	}
-	b, err := hex.DecodeString(s[len(s)-n*2:])
-	if err != nil || len(b) != n {
-		return make([]byte, n)
-	}
-	return b
-}
-
-func bcdNow() []byte { return bcd(time.Now().Format("060102150405"), 6) }
-
-// fixed 定长字符串，右补 0x00
-func fixed(s string, n int) []byte { return fixedPad(s, n, 0) }
-
-func fixedPad(s string, n int, pad byte) []byte {
-	b := gbk(s)
-	if len(b) > n {
-		b = b[:n]
-	}
-	return append(b, bytes.Repeat([]byte{pad}, n-len(b))...)
-}
-
-// lstr 1 字节长度前缀字符串（超过 255 字节截断，避免长度溢出回绕）
-func lstr(s string) []byte {
-	b := gbk(s)
-	if len(b) > 255 {
-		b = b[:255]
-	}
-	return append([]byte{byte(len(b))}, b...)
-}
-
-func bcc(b []byte) byte {
-	var c byte
-	for _, x := range b {
-		c ^= x
-	}
-	return c
-}
-
-func escape(b []byte) []byte {
-	var out bytes.Buffer
-	for _, x := range b {
-		switch x {
-		case 0x7e:
-			out.Write([]byte{0x7d, 0x02})
-		case 0x7d:
-			out.Write([]byte{0x7d, 0x01})
-		default:
-			out.WriteByte(x)
-		}
-	}
-	return out.Bytes()
-}
-
-func unescapeStrict(b []byte) ([]byte, bool) {
-	out := make([]byte, 0, len(b))
-	for i := 0; i < len(b); i++ {
-		if b[i] == 0x7d {
-			if i+1 >= len(b) {
-				return nil, false
-			}
-			switch b[i+1] {
-			case 0x01:
-				out = append(out, 0x7d)
-			case 0x02:
-				out = append(out, 0x7e)
-			default:
-				return nil, false
-			}
-			i++
-		} else {
-			out = append(out, b[i])
-		}
-	}
-	return out, true
-}
-
-func unescape(b []byte) []byte {
-	out, ok := unescapeStrict(b)
-	if !ok {
-		return nil
-	}
-	return out
-}
-
-func u16(v int) []byte { return binary.BigEndian.AppendUint16(nil, uint16(v)) }
-func u32(v int) []byte { return binary.BigEndian.AppendUint32(nil, uint32(v)) }
-
-func cat(parts ...[]byte) []byte {
-	var b bytes.Buffer
-	for _, p := range parts {
-		b.Write(p)
-	}
-	return b.Bytes()
-}
+func gbk(s string) []byte                       { return codec.GBK(s) }
+func ungbk(b []byte) string                     { return codec.UnGBK(b) }
+func bcd(s string, n int) []byte                { return codec.BCD(s, n) }
+func bcdNow() []byte                            { return codec.BCDNow() }
+func fixed(s string, n int) []byte              { return codec.Fixed(s, n) }
+func fixedPad(s string, n int, pad byte) []byte { return codec.FixedPad(s, n, pad) }
+func lstr(s string) []byte                      { return codec.LStr(s) }
+func bcc(b []byte) byte                         { return codec.BCC(b) }
+func escape(b []byte) []byte                    { return codec.Escape(b) }
+func unescape(b []byte) []byte                  { return codec.Unescape(b) }
+func u16(v int) []byte                          { return codec.U16(v) }
+func u32(v int) []byte                          { return codec.U32(v) }
+func cat(parts ...[]byte) []byte                { return codec.Cat(parts...) }
+func Parse(raw []byte) *Msg                     { return codec.Parse(raw) }
 
 // Frame 组完整帧。total>0 时为分包（total 总包数，index 包序号，从 1 开始）
 func Frame(msgID int, phone string, serial int, body []byte, version int, total, index int) []byte {
-	return FrameEnc(msgID, phone, serial, body, version, total, index, false)
+	return codec.Frame(msgID, phone, serial, body, version, total, index)
 }
 
 // FrameEnc 同 Frame；rsa=true 时置消息体属性 bit10（消息体已经过 RSA 加密）
 func FrameEnc(msgID int, phone string, serial int, body []byte, version int, total, index int, rsa bool) []byte {
-	props := len(body) & 0x3FF
-	if total > 0 {
-		props |= 1 << 13
-	}
-	if rsa {
-		props |= 1 << 10
-	}
-	var head []byte
-	if version >= V2019 {
-		props |= 1 << 14
-		head = cat(u16(msgID), u16(props), []byte{1}, bcd(phone, 10))
-	} else {
-		head = cat(u16(msgID), u16(props), bcd(phone, 6))
-	}
-	head = append(head, u16(serial)...)
-	if total > 0 {
-		head = cat(head, u16(total), u16(index))
-	}
-	raw := cat(head, body)
-	raw = append(raw, bcc(raw))
-	return cat([]byte{0x7e}, escape(raw), []byte{0x7e})
-}
-
-type Msg struct {
-	ID      int
-	Version int
-	Phone   string
-	Serial  int
-	Body    []byte
-	OK      bool
-	Total   int  // 分包总数（0 = 不分包）
-	Index   int  // 包序号，从 1 开始
-	RSA     bool // 消息体属性 bit10：消息体经 RSA 加密
-	Raw     []byte
-}
-
-// Parse raw 为去掉首尾 0x7e 的转义数据
-func Parse(raw []byte) *Msg {
-	d, ok := unescapeStrict(raw)
-	if !ok || len(d) < 13 {
-		return nil
-	}
-	m := &Msg{OK: bcc(d[:len(d)-1]) == d[len(d)-1]}
-	d = d[:len(d)-1]
-	m.ID = int(binary.BigEndian.Uint16(d))
-	props := int(binary.BigEndian.Uint16(d[2:]))
-	m.RSA = props&(1<<10) != 0
-	pos := 10
-	if props&(1<<14) != 0 {
-		if len(d) < 17 { // 2019 头被截断：版本(1)+手机号(10)+流水号(2)
-			return nil
-		}
-		m.Version = 1
-		m.Phone = strings.TrimLeft(hex.EncodeToString(d[5:15]), "0")
-		pos = 15
-	} else {
-		m.Phone = strings.TrimLeft(hex.EncodeToString(d[4:10]), "0")
-	}
-	if len(d) < pos+2 {
-		return nil
-	}
-	m.Serial = int(binary.BigEndian.Uint16(d[pos:]))
-	pos += 2
-	if props&(1<<13) != 0 {
-		if len(d) < pos+4 { // 声明了分包但总包数/序号被截断
-			return nil
-		}
-		m.Total = int(binary.BigEndian.Uint16(d[pos:]))
-		m.Index = int(binary.BigEndian.Uint16(d[pos+2:]))
-		pos += 4
-	}
-	bodyLen := props & 0x3FF
-	end := pos + bodyLen
-	if end != len(d) {
-		m.OK = false
-		if end > len(d) {
-			end = len(d)
-		}
-	}
-	if pos > end {
-		pos = end
-	}
-	m.Body = d[pos:end]
-	return m
-}
-
-func (m *Msg) String() string {
-	return fmt.Sprintf("%04X serial=%d len=%d", m.ID, m.Serial, len(m.Body))
-}
-
-// FrameReader 按 0x7e 切帧
-type FrameReader struct{ buf []byte }
-
-// maxFrameBuf 半帧（只有起始 0x7e、没有结尾）缓冲上限，超过即丢弃，防对端撑爆内存
-const maxFrameBuf = 1 << 20
-
-func (r *FrameReader) Feed(data []byte) []*Msg {
-	out, _ := r.FeedWithBad(data)
-	return out
-}
-
-func (r *FrameReader) FeedWithBad(data []byte) ([]*Msg, [][]byte) {
-	r.buf = append(r.buf, data...)
-	var out []*Msg
-	var bad [][]byte
-	for {
-		s := bytes.IndexByte(r.buf, 0x7e)
-		if s < 0 {
-			r.buf = r.buf[:0]
-			return out, bad
-		}
-		e := bytes.IndexByte(r.buf[s+1:], 0x7e)
-		if e < 0 {
-			r.buf = r.buf[s:]
-			if len(r.buf) > maxFrameBuf {
-				r.buf = r.buf[:0]
-			}
-			return out, bad
-		}
-		e += s + 1
-		if e == s+1 { // 连续 7e：前一个是上一帧的尾
-			r.buf = r.buf[e:]
-			continue
-		}
-		raw := append([]byte(nil), r.buf[s:e+1]...)
-		if m := Parse(r.buf[s+1 : e]); m != nil {
-			m.Raw = raw
-			out = append(out, m)
-		} else {
-			bad = append(bad, raw)
-		}
-		r.buf = r.buf[e+1:]
-	}
+	return codec.FrameEnc(msgID, phone, serial, body, version, total, index, rsa)
 }
 
 // ---------------- 消息体 ----------------

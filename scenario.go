@@ -21,10 +21,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -78,6 +79,7 @@ var scenarioActions = map[string]string{
 	"alarm": "报警置位", "clearAlarm": "报警清除", "clearAlarms": "清除全部报警", "status": "状态位", "videoAlarm": "视频报警",
 	"signal": "扩展信号位", "io": "IO 状态位", "speed": "改速度", "motion": "运动模式", "position": "设定位置", "report": "立即上报 0200",
 	"send": "发送消息", "raw": "发送原始报文", "adas": "主动安全报警", "replay": "回放控制", "log": "写日志", "logout": "注销",
+	"expectDown": "断言：收到下行", "expectState": "断言：状态字段", "expectBit": "断言：位状态",
 }
 
 // doActions actions.go 中可直接调用的动作
@@ -224,6 +226,10 @@ func parseStep(m map[string]any) (ScenarioStep, error) {
 		if _, err := strconv.ParseInt(strings.TrimPrefix(pstr(st.Params, "msgId", ""), "0x"), 16, 32); err != nil {
 			return st, fmt.Errorf("send 需要 msgId（十六进制，如 \"0900\"）")
 		}
+	case "expectDown", "expectState", "expectBit":
+		if err := checkAssertStep(st); err != nil {
+			return st, err
+		}
 	}
 	return st, nil
 }
@@ -311,34 +317,39 @@ type scenLog struct {
 }
 
 type scenRun struct {
-	mu       sync.Mutex
-	sc       *Scenario
-	term     *Terminal
-	status   string // running / done / stopped / error
-	step     int    // 正在等待/执行的步骤下标
-	started  time.Time
-	ended    time.Time
-	err      string
-	log      []scenLog
-	stop     chan struct{}
-	done     chan struct{}
-	failures int
+	mu          sync.Mutex
+	sc          *Scenario
+	term        *Terminal
+	status      string // running / done / stopped / error
+	step        int    // 正在等待/执行的步骤下标
+	started     time.Time
+	ended       time.Time
+	err         string
+	log         []scenLog
+	stop        chan struct{}
+	done        chan struct{}
+	failures    int
+	last        time.Time // 上一步开始执行的时间（断言 expectDown 默认从这里起算）
+	asserts     int       // 已执行的断言数
+	assertFails int       // 失败的断言数
 }
 
 type ScenRunView struct {
-	Terminal string    `json:"terminal"`
-	Phone    string    `json:"phone"`
-	Name     string    `json:"name"`
-	Status   string    `json:"status"`
-	Step     int       `json:"step"`
-	Total    int       `json:"total"`
-	Steps    []string  `json:"steps"`
-	Elapsed  float64   `json:"elapsed"`
-	Started  int64     `json:"started"`
-	Error    string    `json:"error,omitempty"`
-	Failures int       `json:"failures"`
-	Log      []scenLog `json:"log"`
-	Progress float64   `json:"progress"`
+	Terminal    string    `json:"terminal"`
+	Phone       string    `json:"phone"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Step        int       `json:"step"`
+	Total       int       `json:"total"`
+	Steps       []string  `json:"steps"`
+	Elapsed     float64   `json:"elapsed"`
+	Started     int64     `json:"started"`
+	Error       string    `json:"error,omitempty"`
+	Failures    int       `json:"failures"`
+	Asserts     int       `json:"asserts"`
+	AssertFails int       `json:"assertFails"`
+	Log         []scenLog `json:"log"`
+	Progress    float64   `json:"progress"`
 }
 
 func (r *scenRun) view() ScenRunView {
@@ -349,7 +360,7 @@ func (r *scenRun) view() ScenRunView {
 		end = r.ended
 	}
 	v := ScenRunView{Terminal: r.term.ID, Phone: r.term.phoneNow(), Name: r.sc.Name, Status: r.status, Step: r.step, Total: len(r.sc.Steps),
-		Elapsed: math.Round(end.Sub(r.started).Seconds()*10) / 10, Started: r.started.UnixMilli(), Error: r.err, Failures: r.failures,
+		Elapsed: math.Round(end.Sub(r.started).Seconds()*10) / 10, Started: r.started.UnixMilli(), Error: r.err, Failures: r.failures, Asserts: r.asserts, AssertFails: r.assertFails,
 		Log: append([]scenLog{}, r.log...)}
 	for _, st := range r.sc.Steps {
 		v.Steps = append(v.Steps, st.label())
@@ -457,6 +468,19 @@ func (h *ScenarioHub) Run(m *Manager, sc *Scenario, cur string) (*Terminal, erro
 	h.mu.Unlock()
 	go r.run(m)
 	return t, nil
+}
+
+// done 终端最近一次运行的结束通道（没有运行时返回已关闭的通道）
+func (h *ScenarioHub) done(id string) <-chan struct{} {
+	h.mu.Lock()
+	r := h.runs[id]
+	h.mu.Unlock()
+	if r == nil {
+		c := make(chan struct{})
+		close(c)
+		return c
+	}
+	return r.done
 }
 
 // Stop 停止终端上正在运行的场景
@@ -571,6 +595,7 @@ func (r *scenRun) run(m *Manager) {
 		}
 	}
 	last := time.Now()
+	prevStart := r.started // 上一步开始执行的时间（expectDown 默认从这里起算，包含上一步触发的平台下发）
 	for i, st := range sc.Steps {
 		r.mu.Lock()
 		r.step = i
@@ -588,6 +613,10 @@ func (r *scenRun) run(m *Manager) {
 			}
 			continue
 		}
+		r.mu.Lock()
+		r.last = prevStart
+		r.mu.Unlock()
+		prevStart = time.Now()
 		err := r.exec(st)
 		last = time.Now()
 		if err == errScenStopped {
@@ -714,6 +743,14 @@ func (r *scenRun) exec(st ScenarioStep) error {
 		return t.Do("setReplay", p)
 	case "log":
 		t.logf("场景：%s", firstNonEmpty(pstr(p, "text", ""), st.Note))
+	case "expectDown", "expectState", "expectBit":
+		r.mu.Lock()
+		since := r.last
+		r.mu.Unlock()
+		if since.IsZero() {
+			since = r.started
+		}
+		return r.execAssert(st, since)
 	default:
 		return t.Do(st.Action, p)
 	}
@@ -742,21 +779,14 @@ func (h *ScenarioHub) loadLib() {
 	}
 	h.ok = true
 	h.lib = nil
-	if b, err := os.ReadFile(scenarioFile()); err == nil {
-		if err := json.Unmarshal(b, &h.lib); err != nil {
-			errf("读取 %s 失败: %v", scenarioFile(), err)
-		}
+	if _, err := readJSONDurable(scenarioFile(), &h.lib); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errf("读取 %s 失败: %v", scenarioFile(), err)
 	}
 }
 
 func (h *ScenarioHub) saveLib() error {
 	b, _ := json.MarshalIndent(h.lib, "", " ")
-	os.MkdirAll(stateDir, 0o755)
-	f := scenarioFile()
-	if err := os.WriteFile(f+".tmp", b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(f+".tmp", f)
+	return writeFileDurable(scenarioFile(), b)
 }
 
 func (h *ScenarioHub) Library() []ScenarioDoc {

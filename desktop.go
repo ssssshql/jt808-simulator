@@ -3,9 +3,9 @@
 package main
 
 // 桌面版（Wails）：不带参数启动时，在 127.0.0.1 随机端口起内置 Web 服务，用 WebView2 窗口打开。
-// 后端与 -web 模式完全相同（含 SSE 日志），只是不再需要浏览器和服务器。
+// 内置服务只监听回环地址，所有请求都要带启动令牌（webGuard），本机其它进程 / 网页无法访问。
 // 窗口无边框，标题栏与窗口按钮在页面里（web/desktop.js）。
-// 状态保存在 %APPDATA%\jt808sim\state；带任意参数启动仍是原来的命令行 / -web 模式。
+// 状态保存在 %APPDATA%\jt808sim\state；带任意参数启动为命令行（无界面）模式。
 // 构建：go build -tags desktop,production -ldflags "-H windowsgui" -o jt808sim.exe .
 
 import (
@@ -62,10 +62,10 @@ func runDesktop() {
 	url := "http://" + ln.Addr().String() + "/"
 	// 本地接口令牌：页面经 ?k= 带入并种下 cookie，本机其它进程/网页无法访问 API
 	token := newToken()
-	pageURL := url
-	if token != "" {
-		pageURL = url + "?k=" + token
+	if token == "" {
+		fatalBox("生成本地接口令牌失败（系统随机数不可用）")
 	}
+	pageURL := url + "?k=" + token
 	logf("%s  桌面版，内置服务: %s  状态目录: %s", versionString(), url, stateDir)
 	srv := &http.Server{Handler: webGuard(newWebMux(m), token), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)

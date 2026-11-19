@@ -2,8 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -71,14 +72,16 @@ func (t *Terminal) load() {
 	if f == "" {
 		return
 	}
-	b, err := os.ReadFile(f)
+	var s Saved
+	used, err := readJSONDurable(f, &s)
 	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.errf("读取 %s 失败: %v（使用默认值）", f, err)
+		}
 		return
 	}
-	var s Saved
-	if err := json.Unmarshal(b, &s); err != nil {
-		t.errf("读取 %s 失败: %v（使用默认值）", f, err)
-		return
+	if used != f {
+		t.errf("状态文件 %s 损坏或缺失，已从备份 %s 恢复", f, used)
 	}
 	if s.Params == nil {
 		s.Params = defaultParams()
@@ -112,17 +115,8 @@ func (t *Terminal) save() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		t.errf("创建状态目录失败: %v", err)
-		return
-	}
-	tmp := f + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := writeFileDurable(f, b); err != nil {
 		t.errf("写入状态失败: %v", err)
-		return
-	}
-	if err := os.Rename(tmp, f); err != nil {
-		t.errf("替换状态文件失败: %v", err)
 		return
 	}
 	t.dirty = false

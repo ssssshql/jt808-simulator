@@ -81,14 +81,14 @@ func (t *Terminal) State() map[string]any {
 		"loc": map[string]any{"lng": t.Lng, "lat": t.Lat, "alt": t.alt, "speed": t.speed, "dir": int(t.dir),
 			"mileage": t.Mileage, "fuel": t.Fuel, "sats": t.sats, "signal": t.signal, "tires": t.Tires, "cabinTemp": t.CabinTemp},
 		"track":       track,
-		"status":      bits(statusNames, t.statusWord()),
-		"alarms":      bits(alarmNames, t.alarmWord()),
+		"status":      t.statusBits(),
+		"alarms":      t.alarmBits(),
 		"videoAlarms": bits(videoAlarmNames, t.videoWord()),
 		"motion": map[string]any{"mode": t.motion.Mode, "speed": t.motion.Speed, "reportInterval": sec,
 			"reportRule": why, "nextReportIn": next, "tempTrack": temp},
 		"reply": map[string]any{"mode": t.replyMode, "delay": t.replyDelay},
 		"counters": map[string]int{"up": t.counters.Up, "down": t.counters.Down, "pendingAcks": len(t.pending),
-			"retrans": t.counters.Retrans, "blindQueue": len(t.Blind)},
+			"retrans": t.counters.Retrans, "blindQueue": len(t.Blind), "blindCap": c.blindCap(), "blindDropped": t.blindDropped},
 		"inbox":      inbox,
 		"media":      media,
 		"params":     t.paramViews(),
@@ -115,18 +115,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // termHandler 从路径 {id} 取终端（旧接口无 {id} 时为默认终端）
 type termHandler func(w http.ResponseWriter, r *http.Request, t *Terminal)
-
-func serveWeb(addr string, m *Manager) error {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	url := "http://" + ln.Addr().String()
-	logf("%s  Web 界面: %s", versionString(), url)
-	openBrowser(url)
-	srv := &http.Server{Handler: newWebMux(m), ReadHeaderTimeout: 10 * time.Second}
-	return srv.Serve(ln)
-}
 
 func newWebMux(m *Manager) http.Handler {
 	mux := http.NewServeMux()
@@ -161,6 +149,9 @@ func newWebMux(m *Manager) http.Handler {
 		w.Header().Set("X-JT808-Build", build)
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, 200, t.State())
+	})
+	handle("GET /state/stream", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
+		serveStateStream(w, r, m, t, build)
 	})
 	handle("GET /params", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		t.mu.Lock()
@@ -206,6 +197,7 @@ func newWebMux(m *Manager) http.Handler {
 		}
 		typ, _ := p["type"].(string)
 		err := t.Do(typ, p)
+		t.kick.notify() // 状态推送立即刷新
 		if typ == "setConfig" {
 			m.save() // 手机号可能变化
 		}
@@ -366,7 +358,7 @@ func withVersion(h http.Handler) http.Handler {
 	})
 }
 
-// newToken 桌面版本地接口的随机令牌（128 位）；rand 不可用时返回空串（调用方退化为不加令牌）
+// newToken 桌面版本地接口的随机令牌（128 位）；rand 不可用时返回空串（调用方拒绝启动）
 func newToken() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -375,17 +367,17 @@ func newToken() string {
 	return hex.EncodeToString(b[:])
 }
 
-// webGuard 桌面版内置服务的防护：token 为空（-web 模式）时原样放行，保持脚本与局域网访问兼容。
-// 启用后：
+// webGuard 桌面版内置服务的防护（始终启用；token 为空时拒绝全部请求，不会退化为不设防）：
 //   - Host 必须是回环地址，防 DNS rebinding（恶意域名解析到 127.0.0.1 后带外源 Host 直接访问）；
 //   - 请求须带启动令牌：首次 ?k=<token> 校验通过后写 HttpOnly cookie，之后同源页面（含 SSE）自动携带。
 //
 // 这样本机其它进程和网页（即便猜到随机端口）都无法读写终端状态或触发操作。
 func webGuard(next http.Handler, token string) http.Handler {
-	if token == "" {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token == "" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			host = strings.Trim(r.Host, "[]")
