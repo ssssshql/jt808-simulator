@@ -819,6 +819,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .cp { cursor: pointer; border-radius: 3px; text-decoration: underline dotted transparent; text-underline-offset: 3px; transition: text-decoration-color .15s, background .15s; }
 .cp:hover { text-decoration-color: currentColor; background: var(--surface-3); }
 .tb-cur .cp { padding: 0 2px; }
+.ms-bg-img { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0.001; pointer-events: none; z-index: -1; }
 .sb-warn { color: var(--warn); font-weight: 500; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* ---------- 日志卡片：报文日志 / 平台下发 标签页 ---------- */

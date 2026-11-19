@@ -35,9 +35,22 @@ const updateRepo = "ssssshql/jt808-simulator"
 var updatePubKey = ""
 
 var (
-	updateAPI  = "https://api.github.com/repos/" + updateRepo + "/releases/latest"
-	updatePage = "https://github.com/" + updateRepo + "/releases/latest"
+	updateAPI     = "https://api.github.com/repos/" + updateRepo + "/releases/latest"
+	updatePage    = "https://github.com/" + updateRepo + "/releases/latest"
+	ghProxyPrefix = "https://gh-proxy.com/"
 )
+
+// getWithProxy 直连失败或非 200 时自动回退 gh-proxy.com 镜像（后续仍会校验 SHA256 与签名）
+func getWithProxy(client *http.Client, rawURL string) (*http.Response, error) {
+	resp, err := client.Get(rawURL)
+	if err == nil && resp.StatusCode == 200 {
+		return resp, nil
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+	return client.Get(ghProxyPrefix + rawURL)
+}
 
 type UpdateInfo struct {
 	Current    string `json:"current"`
@@ -181,18 +194,19 @@ func fetchLatest(ctx context.Context) (*UpdateInfo, error) {
 func latestTagByRedirect(ctx context.Context) (string, error) {
 	c := *updateClient
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	req, _ := http.NewRequestWithContext(ctx, "HEAD", updatePage, nil)
-	resp, err := c.Do(req)
-	if err != nil {
-		return "", err
+	for _, u := range []string{updatePage, ghProxyPrefix + updatePage} {
+		req, _ := http.NewRequestWithContext(ctx, "HEAD", u, nil)
+		resp, err := c.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		loc := resp.Header.Get("Location")
+		if i := strings.LastIndex(loc, "/tag/"); i >= 0 {
+			return loc[i+5:], nil
+		}
 	}
-	resp.Body.Close()
-	loc := resp.Header.Get("Location")
-	i := strings.LastIndex(loc, "/tag/")
-	if i < 0 {
-		return "", errors.New("发布页没有返回版本标签")
-	}
-	return loc[i+5:], nil
+	return "", errors.New("发布页没有返回版本标签")
 }
 
 // checkUpdate 带 10 分钟缓存；force 时重新获取
@@ -235,7 +249,7 @@ func installUpdate(info *UpdateInfo, quit func()) {
 	path := filepath.Join(dir, info.SetupName)
 
 	dl := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := dl.Get(info.SetupURL)
+	resp, err := getWithProxy(dl, info.SetupURL)
 	if err != nil {
 		fail(fmt.Errorf("下载失败: %w", err))
 		return
@@ -296,7 +310,7 @@ func expectedSum(url, name string) (string, error) {
 	if url == "" {
 		return "", errors.New("发布中没有 SHA256SUMS，无法校验")
 	}
-	resp, err := updateClient.Get(url)
+	resp, err := getWithProxy(updateClient, url)
 	if err != nil {
 		return "", fmt.Errorf("获取校验文件失败: %w", err)
 	}
@@ -323,7 +337,7 @@ func verifySetupSig(sigURL, path string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := updateClient.Get(sigURL)
+	resp, err := getWithProxy(updateClient, sigURL)
 	if err != nil {
 		return fmt.Errorf("获取签名失败: %w", err)
 	}

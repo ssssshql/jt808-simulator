@@ -53,7 +53,9 @@ function msStop() {
   if (msTimer) { clearInterval(msTimer); msTimer = null; }
   const v = $('#msVideo');
   v.pause(); v.srcObject = null; v.removeAttribute('src');
-  $('#msImg').removeAttribute('src');
+  const img = $('#msImg');
+  img.removeAttribute('src'); img.onload = null;
+  syncMsImgMount(true);
   const pv = $('#msVid');
   pv.pause();
   if (pv.dataset.url) { URL.revokeObjectURL(pv.dataset.url); delete pv.dataset.url; }
@@ -472,13 +474,7 @@ function renderMs(s) {
   const sig = TID + ':' + msCh + ':' + src + ':' + msUpTick;
   if (src && sig !== msLoaded) {
     msLoaded = sig;
-    if (src === 'image') {
-      const img = $('#msImg');
-      const startImg = () => { msStartCapture(); msRecWant = true; msRecStart(); };
-      img.onload = startImg;
-      img.src = msUrl('mediasrc') + '&t=' + msUpTick;
-      if (img.complete && img.naturalWidth > 0) startImg();
-    }
+    if (src === 'image') msLoadImg();
     if (src === 'video') {
       const v = $('#msVideo');
       v.src = msUrl('mediasrc') + '&t=' + msUpTick;
@@ -527,17 +523,45 @@ function renderMs(s) {
   $('#msHint').textContent = msChName() + '：' + body + h264Tip + stampTip + inhTip;
 }
 
-function msBootAutoCam(s) {
-  if (msStream) return;
+function syncMsImgMount(forceHome) {
+  const img = $('#msImg'), wrap = $('#msPreviewWrap');
+  if (!img || !wrap) return;
+  const wantHome = forceHome || page === 'media' || !(img.currentSrc || img.getAttribute('src'));
+  if (wantHome) {
+    img.classList.remove('ms-bg-img');
+    if (img.parentElement !== wrap) wrap.insertBefore(img, $('#msCamOff'));
+  } else {
+    img.classList.add('ms-bg-img');
+    if (img.parentElement !== document.body) document.body.appendChild(img);
+  }
+}
+
+function msLoadImg() {
+  const img = $('#msImg');
+  img.hidden = false;
+  syncMsImgMount();
+  const startImg = () => { msStartCapture(); msRecWant = true; msRecStart(); };
+  img.onload = startImg;
+  img.src = msUrl('mediasrc') + '&t=' + msUpTick;
+  if (img.complete && img.naturalWidth > 0) startImg();
+}
+
+function msBootMedia(s) {
+  syncMsImgMount();
   const all = s.mediaSrc || {};
   let cur = all[msCh];
   if ((!cur || !cur.src) && msCh === '0') {
-    const found = Object.entries(all).find(([, v]) => v && v.own && v.src === 'camera');
+    const found = Object.entries(all).find(([, v]) => v && v.own && (v.src === 'camera' || v.src === 'image'));
     if (found) { msCh = found[0]; cur = found[1]; }
   }
-  if (cur && cur.src === 'camera') msAutoCamera();
+  if (!cur) return;
+  if (cur.src === 'camera' && !msStream) msAutoCamera();
+  if (cur.src === 'image') {
+    const sig = TID + ':' + msCh + ':image:' + msUpTick;
+    if (sig !== msLoaded) { msLoaded = sig; msLoadImg(); }
+  }
 }
 
-onState(s => { if (page === 'media') renderMs(s); else msBootAutoCam(s); });
-onPage('media', () => S && renderMs(S));
+onState(s => { syncMsImgMount(); if (page === 'media') renderMs(s); else msBootMedia(s); });
+onPage('media', () => { syncMsImgMount(); S && renderMs(S); });
 onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); });
