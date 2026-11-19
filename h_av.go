@@ -39,10 +39,20 @@ func (t *Terminal) h9101(m *Msg) {
 	ip := r.lstr()
 	tcp, udp, ch, dtype, stype := r.u16(), r.u16(), r.u8(), r.u8(), r.u8()
 	if r.err != nil {
+		t.errf("9101 格式错误（消息体 %d 字节）: %v", len(m.Body), r.err)
+		t.addInbox("av", "实时音视频（格式错误）", fmt.Sprintf("消息体 %d 字节: %X", len(m.Body), m.Body), 0, nil)
+		t.ack(m, 2)
+		return
+	}
+	if ip == "" || (tcp == 0 && udp == 0) {
+		t.errf("9101 地址或端口无效: ip=%q tcp=%d udp=%d", ip, tcp, udp)
+		t.addInbox("av", "实时音视频（参数无效）", fmt.Sprintf("通道 %d 地址=%q TCP=%d UDP=%d", ch, ip, tcp, udp), 0, nil)
 		t.ack(m, 2)
 		return
 	}
 	if !t.avChannelOK(ch) {
+		t.errf("9101 通道 %d 不支持（仅支持 1~%d，粤标另支持 0x64/0x65/0x67）", ch, avChannels)
+		t.addInbox("av", "实时音视频（通道不支持）", fmt.Sprintf("通道 %d -> %s TCP %d UDP %d", ch, ip, tcp, udp), 0, nil)
 		t.ack(m, 1)
 		return
 	}
@@ -144,6 +154,8 @@ func (t *Terminal) h9201(m *Msg) {
 	tcp, udp, ch, avType, _, _, mode, speed := r.u16(), r.u16(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8()
 	from, to := r.time6(), r.time6()
 	if r.err != nil {
+		t.errf("9201 格式错误（消息体 %d 字节）: %v", len(m.Body), r.err)
+		t.addInbox("av", "录像回放（格式错误）", fmt.Sprintf("消息体 %d 字节: %X", len(m.Body), m.Body), 0, nil)
 		t.ack(m, 2)
 		return
 	}
