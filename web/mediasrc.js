@@ -28,6 +28,7 @@ let msCapStream = null;   // <video> captureStream 得到的流（复用，避�
 let msCapFor = '';        // 上面的流对应的媒体地址
 const msCamTried = new Set(); // 本次页面加载已自动尝试开启摄像头的通道（避免每次轮询重试）
 const msCanvas = document.createElement('canvas');
+const msImgCanvas = document.createElement('canvas');
 const MS_NAME = { '': '默认合成图', image: '图片文件', video: '视频文件', camera: '电脑摄像头' };
 const MS_SRC = { frame: '当前播放画面（抓帧）', image: '上传的图片文件', synthetic: '合成彩条测试图' };
 const MS_VSRC = { clip: '最近一段录制', source: '上传的源视频', builtin: '内置 alarm.mp4（3 秒彩条）' };
@@ -63,16 +64,35 @@ function msStop() {
   msLoaded = '';
 }
 
-// 录制用的视频流：摄像头直接用 getUserMedia 的流；视频文件用 <video>.captureStream()（同一地址复用）
+// 录制用的视频流：摄像头直接用 getUserMedia 的流；视频用 <video>.captureStream()；图片/GIF 用 canvas.captureStream()
 function msRecStream() {
   if (msStream) return msStream;
   const v = $('#msVideo');
-  const key = v.currentSrc || v.src || '';
-  if (!key) return null;
-  if (msCapStream && msCapFor === key) return msCapStream;
-  if (typeof v.captureStream !== 'function') return null;
-  try { msCapStream = v.captureStream(); msCapFor = key; } catch (_) { return null; }
+  const vKey = v.currentSrc || v.src || '';
+  if (vKey) {
+    if (msCapStream && msCapFor === vKey) return msCapStream;
+    if (typeof v.captureStream !== 'function') return null;
+    try { msCapStream = v.captureStream(); msCapFor = vKey; } catch (_) { return null; }
+    return msCapStream;
+  }
+  const img = $('#msImg');
+  const iKey = (!img.hidden && img.complete && img.naturalWidth > 0) ? (img.currentSrc || img.src || '') : '';
+  if (!iKey || typeof msImgCanvas.captureStream !== 'function') return null;
+  if (msCapStream && msCapFor === iKey) return msCapStream;
+  msSyncImgCanvas(img);
+  try { msCapStream = msImgCanvas.captureStream(15); msCapFor = iKey; } catch (_) { return null; }
   return msCapStream;
+}
+
+function msSyncImgCanvas(img) {
+  const w = Math.min(img.naturalWidth, 640) & ~1;
+  const h = Math.round(img.naturalHeight * w / img.naturalWidth) & ~1;
+  if (w < 16 || h < 16) return null;
+  if (msImgCanvas.width !== w || msImgCanvas.height !== h) {
+    msImgCanvas.width = w; msImgCanvas.height = h;
+  }
+  msImgCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
+  return { el: msImgCanvas, w, h };
 }
 
 // 开始一段录制：录满 MS_REC_CHUNKS 秒自动停下 → 回传后端 → 继续录下一段
@@ -218,18 +238,25 @@ async function msOpenH264(w, h, ch) {
 
 function msStartH264() {
   if (msH264Timer) return;
-  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
+  const hasWebCodecs = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
+  if (!hasWebCodecs) {
     msH264Err = '当前环境不支持 WebCodecs VideoEncoder，1078 推流将回退彩条';
-    return;
   }
   const ch = msCh;
   let frameIdx = 0;
   msH264Timer = setInterval(() => {
-    const v = $('#msVideo');
-    if (!v.videoWidth || v.readyState < 2 || msH264Init) return;
+    const v = $('#msVideo'), img = $('#msImg');
+    let srcEl = null, rw = 0, rh = 0;
+    if (v.videoWidth && v.readyState >= 2) {
+      srcEl = v; rw = v.videoWidth; rh = v.videoHeight;
+    } else if (!img.hidden && img.complete && img.naturalWidth > 0) {
+      const synced = msSyncImgCanvas(img);
+      if (synced) { srcEl = synced.el; rw = synced.w; rh = synced.h; }
+    }
+    if (!srcEl || !hasWebCodecs || msH264Init) return;
     // 宽高按偶数对齐，最大宽度 640
-    const w = Math.min(v.videoWidth, 640) & ~1;
-    const h = Math.round(v.videoHeight * w / v.videoWidth) & ~1;
+    const w = Math.min(rw, 640) & ~1;
+    const h = Math.round(rh * w / rw) & ~1;
     if (w < 16 || h < 16) return;
     const dims = `${w}x${h}`;
     if (!msH264Enc || msH264Enc.state === 'closed' || msH264Dims !== dims) {
@@ -241,7 +268,7 @@ function msStartH264() {
     }
     if (msH264Enc.state !== 'configured' || msH264Enc.encodeQueueSize > 3) return;
     try {
-      const vf = new VideoFrame(v, { timestamp: Math.round(performance.now() * 1000) });
+      const vf = new VideoFrame(srcEl, { timestamp: Math.round(performance.now() * 1000) });
       msH264Enc.encode(vf, { keyFrame: frameIdx % 30 === 0 });
       vf.close();
       frameIdx++;
@@ -249,16 +276,22 @@ function msStartH264() {
   }, 67);
 }
 
-// 抓帧：视频/摄像头画面 → JPEG → 后端该通道的帧历史（窗口隐藏时也继续，保证随时能截到当前画面）
+// 抓帧：视频/摄像头/动态图片画面 → JPEG → 后端该通道的帧历史（窗口隐藏时也继续，保证随时能截到当前画面）
 function msStartCapture() {
   msStartH264();
   if (msTimer) return;
   msTimer = setInterval(async () => {
-    const v = $('#msVideo');
-    if (!v.videoWidth || v.readyState < 2) return;
-    const w = Math.min(v.videoWidth, 640), h = Math.round(v.videoHeight * w / v.videoWidth);
+    const v = $('#msVideo'), img = $('#msImg');
+    let srcEl = null, rw = 0, rh = 0;
+    if (v.videoWidth && v.readyState >= 2) {
+      srcEl = v; rw = v.videoWidth; rh = v.videoHeight;
+    } else if (!img.hidden && img.complete && img.naturalWidth > 0) {
+      srcEl = img; rw = img.naturalWidth; rh = img.naturalHeight;
+    }
+    if (!srcEl) return;
+    const w = Math.min(rw, 640), h = Math.round(rh * w / rw);
     msCanvas.width = w; msCanvas.height = h;
-    msCanvas.getContext('2d').drawImage(v, 0, 0, w, h);
+    msCanvas.getContext('2d').drawImage(srcEl, 0, 0, w, h);
     const blob = await new Promise(res => msCanvas.toBlob(res, 'image/jpeg', 0.85));
     if (!blob) return;
     try { await fetch(msUrl('frame'), { method: 'POST', body: blob }); } catch (_) { }
@@ -439,7 +472,13 @@ function renderMs(s) {
   const sig = TID + ':' + msCh + ':' + src + ':' + msUpTick;
   if (src && sig !== msLoaded) {
     msLoaded = sig;
-    if (src === 'image') $('#msImg').src = msUrl('mediasrc') + '&t=' + msUpTick;
+    if (src === 'image') {
+      const img = $('#msImg');
+      const startImg = () => { msStartCapture(); msRecWant = true; msRecStart(); };
+      img.onload = startImg;
+      img.src = msUrl('mediasrc') + '&t=' + msUpTick;
+      if (img.complete && img.naturalWidth > 0) startImg();
+    }
     if (src === 'video') {
       const v = $('#msVideo');
       v.src = msUrl('mediasrc') + '&t=' + msUpTick;
@@ -471,7 +510,8 @@ function renderMs(s) {
     body = '合成彩条测试图 + 内置 alarm.mp4（3 秒彩条：附件里看到它就说明这个通道没设真实媒体源）。'
       + '选择图片/视频文件或摄像头后，图片附件截取当前画面（多张按 2 秒间隔取不同时刻），视频附件取最近约 6 秒录制。';
   } else if (src === 'image') {
-    body = '图片附件用上传的这张图片（多张时按 2 秒间隔错开时间水印）；图片源没有播放画面，视频附件仍用内置 alarm.mp4。';
+    body = (frameText ? `图片/动态图持续抓帧，${frameText}。` : '图片加载中…') + staleTip
+      + `图片附件取当前画面（GIF 动图多张按 2 秒间隔取不同时刻）；${recNote}；${clipText}。`;
   } else if (src === 'camera') {
     body = camIdle
       ? '摄像头未开启：程序重启后浏览器不会自动恢复视频流（也可能权限被拒），此时附件图片会用合成彩条图、视频用内置 alarm.mp4。点上面的「电脑摄像头」或下面的「开启摄像头」恢复。'
@@ -481,7 +521,7 @@ function renderMs(s) {
     body = (frameText ? `视频循环播放，${frameText}。` : '视频加载中…') + staleTip
       + `图片附件截取当前播放画面（多张按 2 秒间隔取不同时刻）；${recNote}；${clipText}。`;
   }
-  const h264Tip = (src === 'camera' || src === 'video') && !camIdle
+  const h264Tip = (src === 'camera' || src === 'video' || src === 'image') && !camIdle
     ? (msH264Err ? ` 1078 推流：${msH264Err}。` : msH264Cnt > 0 ? ` 1078 实时 H.264 已推送 ${msH264Cnt} 帧。` : ' 1078 实时 H.264 编码初始化中…。')
     : '';
   $('#msHint').textContent = msChName() + '：' + body + h264Tip + stampTip + inhTip;

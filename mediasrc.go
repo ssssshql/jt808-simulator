@@ -215,8 +215,9 @@ func (t *Terminal) setMediaSource(ch int, kind, ext string, data []byte) error {
 		return err
 	}
 	var out []byte
+	var gifData []byte
 	if kind == "image" {
-		img, _, err := image.Decode(bytes.NewReader(data))
+		img, format, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
 			return fmt.Errorf("图片解码失败（支持 JPEG/PNG/GIF）: %v", err)
 		}
@@ -225,6 +226,9 @@ func (t *Terminal) setMediaSource(ch int, kind, ext string, data []byte) error {
 			return err
 		}
 		out, ext = buf.Bytes(), ".jpg"
+		if format == "gif" {
+			gifData = data
+		}
 	} else {
 		out = data
 	}
@@ -235,6 +239,14 @@ func (t *Terminal) setMediaSource(ch int, kind, ext string, data []byte) error {
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return err
+	}
+	if len(gifData) > 0 {
+		gp := mediaFile(t.ID, ch, ".gif")
+		if err := os.WriteFile(gp+".tmp", gifData, 0o644); err == nil {
+			os.Rename(gp+".tmp", gp)
+		}
+	} else {
+		os.Remove(mediaFile(t.ID, ch, ".gif"))
 	}
 	// 清掉同一通道旧源的其它扩展名文件
 	for _, e := range []string{".jpg", ".mp4"} {
@@ -256,7 +268,7 @@ func (t *Terminal) clearMediaSource(ch int) {
 	if !validCh(ch) {
 		return
 	}
-	for _, e := range []string{".jpg", ".mp4"} {
+	for _, e := range []string{".jpg", ".gif", ".mp4"} {
 		os.Remove(mediaFile(t.ID, ch, e))
 	}
 	t.mu.Lock()
@@ -502,7 +514,7 @@ func (t *Terminal) imageAt(ch int, back time.Duration) ([]byte, time.Time) {
 	t.mu.Lock()
 	src, id, fb := t.mediaSrcOf(ch), t.ID, t.frameAgo(ch, back)
 	t.mu.Unlock()
-	if len(fb.data) > 0 && (src == "video" || src == "camera") {
+	if len(fb.data) > 0 && (src == "video" || src == "camera" || src == "image") {
 		return fb.data, fb.at
 	}
 	if src == "image" {
@@ -680,9 +692,24 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 			writeJSON(w, 404, map[string]any{"ok": false, "error": "该通道未设置媒体文件"})
 			return
 		}
-		path := mediaFile(id, ch, ext)
-		if _, err := os.Stat(path); err != nil {
-			path = mediaFile(id, 0, ext) // 通道继承全局设置时用全局文件
+		var path, ctype string
+		if src == "image" {
+			targetCh := ch
+			if _, err := os.Stat(mediaFile(id, ch, ".jpg")); err != nil {
+				if _, err := os.Stat(mediaFile(id, ch, ".gif")); err != nil {
+					targetCh = 0 // 通道继承全局设置时用全局文件
+				}
+			}
+			if gp := mediaFile(id, targetCh, ".gif"); func() bool { _, err := os.Stat(gp); return err == nil }() {
+				path, ctype = gp, "image/gif"
+			} else {
+				path, ctype = mediaFile(id, targetCh, ".jpg"), "image/jpeg"
+			}
+		} else {
+			path, ctype = mediaFile(id, ch, ".mp4"), "video/mp4"
+			if _, err := os.Stat(path); err != nil {
+				path = mediaFile(id, 0, ".mp4") // 通道继承全局设置时用全局文件
+			}
 		}
 		f, err := os.Open(path)
 		if err != nil {
@@ -696,7 +723,7 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", map[string]string{".jpg": "image/jpeg", ".mp4": "video/mp4"}[ext])
+		w.Header().Set("Content-Type", ctype)
 		// ServeContent 支持 Range：<video> 需要它做 seek，未做 faststart 的 MP4 也要靠它读文件尾的 moov
 		http.ServeContent(w, r, filepath.Base(path), st.ModTime(), f)
 	})
