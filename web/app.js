@@ -229,7 +229,8 @@ $('#moreBtn').onclick = e => {
   $('#moreBtn').setAttribute('aria-expanded', String(open));
   if (open) $('#moreMenu [role=menuitem]')?.focus();
 };
-document.addEventListener('click', e => { if (!e.target.closest('#moreDd')) closeMore(); });
+document.addEventListener('pointerdown', e => { if (!$('#moreMenu').hidden && !e.target.closest('#moreDd')) closeMore(); }, true);
+window.addEventListener('blur', closeMore);
 $('#moreMenu').addEventListener('keydown', e => {
   const items = $$('#moreMenu [role=menuitem]'), i = items.indexOf(document.activeElement);
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }

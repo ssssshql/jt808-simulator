@@ -19,7 +19,7 @@
 
   // 标题栏空白处拖动窗口；按钮、输入框等可交互元素除外
   const bar = $('#titlebar');
-  const interactive = el => el.closest('button, a, input, select, textarea, .status, .ver');
+  const interactive = el => el.closest('button, a, input, select, textarea, .status, .ver, [data-copy]');
   bar.addEventListener('mousedown', e => {
     if (e.button !== 0 || e.detail > 1 || interactive(e.target) || edge(e)) return;
     e.preventDefault(); send('drag');
