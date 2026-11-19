@@ -339,6 +339,17 @@ async function loadVersion() {
     el.hidden = false;
   } catch (_) { }
 }
+document.addEventListener('click', async e => {
+  const a = e.target.closest('a[data-ext]');
+  if (!a) return;
+  e.preventDefault();
+  const url = a.href;
+  try {
+    const j = await fetchJSON('api/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    if (!j.ok) window.open(url, '_blank', 'noopener');
+  } catch (_) { window.open(url, '_blank', 'noopener'); }
+});
+
 window.addEventListener('DOMContentLoaded', () => {
   const h = location.hash.slice(1); // go('overview') 会清掉地址栏的 #，先记下深链接
   loadVersion(); loadTerms(); go('overview'); if (h) go(h); poll(); });
