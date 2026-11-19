@@ -248,7 +248,11 @@ func (t *Terminal) readLoop(c net.Conn) error {
 		if udp { // UDP：一个数据报一条消息，不跨数据报拼接
 			r = FrameReader{}
 		}
-		for _, m := range r.Feed(buf[:n]) {
+		msgs, bad := r.FeedWithBad(buf[:n])
+		for _, raw := range bad {
+			t.errf("收到无法解析的下行帧（%d 字节）: %X", len(raw), raw)
+		}
+		for _, m := range msgs {
 			t.onDown(m)
 		}
 	}

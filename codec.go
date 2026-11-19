@@ -248,13 +248,19 @@ type FrameReader struct{ buf []byte }
 const maxFrameBuf = 1 << 20
 
 func (r *FrameReader) Feed(data []byte) []*Msg {
+	out, _ := r.FeedWithBad(data)
+	return out
+}
+
+func (r *FrameReader) FeedWithBad(data []byte) ([]*Msg, [][]byte) {
 	r.buf = append(r.buf, data...)
 	var out []*Msg
+	var bad [][]byte
 	for {
 		s := bytes.IndexByte(r.buf, 0x7e)
 		if s < 0 {
 			r.buf = r.buf[:0]
-			return out
+			return out, bad
 		}
 		e := bytes.IndexByte(r.buf[s+1:], 0x7e)
 		if e < 0 {
@@ -262,16 +268,19 @@ func (r *FrameReader) Feed(data []byte) []*Msg {
 			if len(r.buf) > maxFrameBuf {
 				r.buf = r.buf[:0]
 			}
-			return out
+			return out, bad
 		}
 		e += s + 1
 		if e == s+1 { // 连续 7e：前一个是上一帧的尾
 			r.buf = r.buf[e:]
 			continue
 		}
+		raw := append([]byte(nil), r.buf[s:e+1]...)
 		if m := Parse(r.buf[s+1 : e]); m != nil {
-			m.Raw = append([]byte(nil), r.buf[s:e+1]...)
+			m.Raw = raw
 			out = append(out, m)
+		} else {
+			bad = append(bad, raw)
 		}
 		r.buf = r.buf[e+1:]
 	}
