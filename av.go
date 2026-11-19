@@ -218,6 +218,8 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 	defer vt.Stop()
 	defer at.Stop()
 	fi, phase := 0, 0.0
+	var liveSeq uint64
+	liveNeedKey := true
 	w.lastI, w.lastF = media, media
 	sentVideo := !s.video.Load() // 音视频流以 I 帧开头，首帧视频发出前不发音频
 	for {
@@ -236,8 +238,20 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 			if !playEnd.IsZero() && media.After(playEnd) {
 				return
 			}
-			f := fs[fi%len(fs)]
-			fi++
+			var f vframe
+			if lf, hasFrame, live := t.liveH264Next(s.Channel, liveSeq, liveNeedKey); live {
+				if !hasFrame {
+					continue // 实时流活跃但本拍未到新帧（或等待关键帧），跳过本拍避免回退彩条闪烁
+				}
+				liveSeq = lf.seq
+				liveNeedKey = false
+				f = vframe{data: lf.data, key: lf.key}
+			} else {
+				liveSeq = 0
+				liveNeedKey = true
+				f = fs[fi%len(fs)]
+				fi++
+			}
 			dtype := 1 // P 帧
 			if f.key {
 				dtype = 0

@@ -40,7 +40,7 @@ const (
 )
 
 // mediaChs 可单独设置媒体源的通道号；0 表示「全部通道」（默认，其他通道未设置时继承它）
-var mediaChs = []int{64, 65, 66, 67}
+var mediaChs = []int{1, 2, 3, 4, 64, 65, 66, 67}
 
 // frameBuf 某通道的一次抓帧
 type frameBuf struct {
@@ -138,11 +138,12 @@ func (t *Terminal) setMediaLocked(ch int, kind string) {
 // dropCache 丢掉该通道的抓帧历史与录制片段（换源/清源后旧画面必须作废）。调用方持有 t.mu
 func (t *Terminal) dropCache(ch int) {
 	if ch == 0 {
-		t.frames, t.clips = map[string][]frameBuf{}, map[string]clipBuf{}
+		t.frames, t.clips, t.h264 = map[string][]frameBuf{}, map[string]clipBuf{}, map[string]*h264Ring{}
 		return
 	}
 	delete(t.frames, chKey(ch))
 	delete(t.clips, chKey(ch))
+	delete(t.h264, chKey(ch))
 }
 
 // mediaSrcOf 该通道实际生效的来源类型：通道单独设置优先，否则用全局。调用方持有 t.mu
@@ -283,6 +284,83 @@ func (t *Terminal) setCamera(ch int, on bool) {
 	}
 	t.markDirty()
 	t.mu.Unlock()
+}
+
+type h264Buf struct {
+	data []byte
+	key  bool
+	seq  uint64
+	at   time.Time
+}
+
+type h264Ring struct {
+	seq   uint64
+	items []h264Buf
+}
+
+func (t *Terminal) setH264(ch int, key bool, data []byte) error {
+	if !validCh(ch) {
+		return fmt.Errorf("通道号无效")
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("H.264 帧为空")
+	}
+	t.mu.Lock()
+	if t.h264 == nil {
+		t.h264 = map[string]*h264Ring{}
+	}
+	k := chKey(ch)
+	r := t.h264[k]
+	if r == nil {
+		r = &h264Ring{}
+		t.h264[k] = r
+	}
+	r.seq++
+	r.items = append(r.items, h264Buf{data: data, key: key, seq: r.seq, at: time.Now()})
+	if len(r.items) > 45 {
+		r.items = r.items[len(r.items)-45:]
+	}
+	t.mu.Unlock()
+	return nil
+}
+
+// liveH264Next 获取 1078 实时 H.264 帧：优先通道专属，否则回退「全部通道(0)」。
+// 返回 (帧, 是否有新帧, 实时流是否活跃)。活跃期内暂无新帧时由调用方跳过本拍，避免回退彩条闪烁。
+func (t *Terminal) liveH264Next(ch int, lastSeq uint64, needKey bool) (h264Buf, bool, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	const liveWindow = 2500 * time.Millisecond
+	pick := func(k string) *h264Ring {
+		r := t.h264[k]
+		if r == nil || len(r.items) == 0 {
+			return nil
+		}
+		if time.Since(r.items[len(r.items)-1].at) > liveWindow {
+			return nil
+		}
+		return r
+	}
+	r := pick(chKey(ch))
+	if r == nil && ch != 0 {
+		r = pick(chKey(0))
+	}
+	if r == nil {
+		return h264Buf{}, false, false
+	}
+	if needKey {
+		for i := len(r.items) - 1; i >= 0; i-- {
+			if r.items[i].key {
+				return r.items[i], true, true
+			}
+		}
+		return h264Buf{}, false, true
+	}
+	for _, it := range r.items {
+		if it.seq > lastSeq {
+			return it, true, true
+		}
+	}
+	return h264Buf{}, false, true
 }
 
 // setFrame 前端回传的当前画面（JPEG），同时进该通道的帧历史（附件多张图片取不同时刻）
@@ -562,6 +640,19 @@ func registerMediaSrcAPI(handle func(string, termHandler)) {
 		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFrameBytes))
 		if err != nil || t.setFrame(ch, data) != nil {
 			writeJSON(w, 200, map[string]any{"ok": false, "error": "无效帧数据"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+	})
+	handle("POST /h264", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
+		ch, ok := queryCh(r)
+		if !ok {
+			writeJSON(w, 200, map[string]any{"ok": false, "error": "通道号无效"})
+			return
+		}
+		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFrameBytes))
+		if err != nil || t.setH264(ch, r.URL.Query().Get("key") == "1", data) != nil {
+			writeJSON(w, 200, map[string]any{"ok": false, "error": "无效 H.264 帧"})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})

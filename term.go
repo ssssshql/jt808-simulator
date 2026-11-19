@@ -226,6 +226,7 @@ type Terminal struct {
 	// 媒体源：前端回传的画面历史（每通道最新帧在前；附件多张图片按序号取不同时刻），键为通道号（"0" = 全部通道）
 	frames map[string][]frameBuf
 	clips  map[string]clipBuf // 视频/摄像头最近一段录制（附件视频用），键同上
+	h264   map[string]*h264Ring
 }
 
 var stateDir = "state"
@@ -236,7 +237,7 @@ func NewTerminal(cfg Config) *Terminal {
 		ftpCtl: map[int]chan int{}, lastPhoto: map[int]time.Time{}, segIn: map[int]*segVisit{}, adasPending: map[string]adasAlarm{}, sats: 12, signal: 25, alt: 20}
 	t.Params = defaultParams()
 	t.Lng, t.Lat, t.Mileage, t.Fuel = 113.324520, 23.106470, 12345.6, 80
-	t.frames, t.clips = map[string][]frameBuf{}, map[string]clipBuf{}
+	t.frames, t.clips, t.h264 = map[string][]frameBuf{}, map[string]clipBuf{}, map[string]*h264Ring{}
 	t.StatusOn = 1 | 1<<18 | 1<<19 // ACC 开 + GPS/北斗定位
 	t.Events, t.Menus = map[int]string{}, map[int]string{}
 	t.MediaSeq = int(time.Now().Unix() % 100000)
