@@ -13,10 +13,25 @@ import (
 	"time"
 )
 
+func resetLogDiskLocked() {
+	logDisk.active = false
+	logDisk.set = LogSettings{}
+	logDisk.loaded = false
+	logDisk.closeLocked()
+	logDisk.day = ""
+	logDisk.part = 0
+	logDisk.size = 0
+	logDisk.lastErr = ""
+	logDisk.dropped.Store(0)
+}
+
 // 测试用：独立的落盘日志实例（指向临时状态目录）
 func freshLogDisk(t *testing.T, enabled bool) {
 	t.Helper()
-	logDisk = &logStore{}
+	logDisk.Flush()
+	logDisk.mu.Lock()
+	resetLogDiskLocked()
+	logDisk.mu.Unlock()
 	if err := logDisk.SetSettings(LogSettings{Enabled: enabled, MaxMB: 10, Days: 3}); err != nil {
 		t.Fatal(err)
 	}
@@ -24,11 +39,10 @@ func freshLogDisk(t *testing.T, enabled bool) {
 		logDisk.Start()
 	}
 	t.Cleanup(func() {
+		logDisk.Flush()
 		logDisk.mu.Lock()
-		logDisk.set.Enabled = false
-		logDisk.closeLocked()
+		resetLogDiskLocked()
 		logDisk.mu.Unlock()
-		logDisk = &logStore{}
 	})
 }
 
