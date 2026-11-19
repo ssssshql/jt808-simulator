@@ -12,6 +12,10 @@ let msTimer = null;       // 抓帧定时器
 let msH264Timer = null;   // 15fps H.264 实时编码推流定时器
 let msH264Enc = null;     // WebCodecs VideoEncoder
 let msH264Dims = '';
+let msH264Cnt = 0;        // 已推送 H.264 帧数
+let msH264Err = '';       // H.264 编码错误提示
+let msH264Init = false;   // 正在异步探测编码器支持
+let msH264Chain = Promise.resolve(); // 保证 HTTP 推流顺序一致
 let msPending = '';       // 文件选择器等待的类型（image/video）
 let msUpTick = 0;         // 上传时间戳：变化时刷新预览地址
 let msLoaded = '';        // 已加载预览的签名（避免轮询时重置播放）
@@ -167,47 +171,73 @@ function msStopH264() {
   if (msH264Timer) { clearInterval(msH264Timer); msH264Timer = null; }
   if (msH264Enc) { try { msH264Enc.close(); } catch (_) { } msH264Enc = null; }
   msH264Dims = '';
+  msH264Cnt = 0;
+  msH264Err = '';
+  msH264Init = false;
+  msH264Chain = Promise.resolve();
+}
+
+async function msOpenH264(w, h, ch) {
+  msH264Init = true;
+  try {
+    const base = { width: w, height: h, bitrate: 500000, framerate: 15, latencyMode: 'realtime', avc: { format: 'annexb' } };
+    let cfg = null;
+    for (const codec of ['avc1.42E01E', 'avc1.42001E', 'avc1.4D401E']) {
+      const res = await VideoEncoder.isConfigSupported({ ...base, codec }).catch(() => null);
+      if (res?.supported) { cfg = { ...base, codec }; break; }
+    }
+    if (!cfg) {
+      msH264Err = '浏览器不支持 H.264 实时编码，1078 推流将回退彩条';
+      msH264Init = false;
+      return;
+    }
+    if (!msH264Timer) { msH264Init = false; return; }
+    msH264Enc = new VideoEncoder({
+      output: chunk => {
+        const buf = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buf);
+        const key = chunk.type === 'key' ? 1 : 0;
+        msH264Chain = msH264Chain.then(() =>
+          fetch(api('h264') + '?ch=' + ch + '&key=' + key, { method: 'POST', body: buf })
+            .then(r => r.ok && msH264Cnt++)
+            .catch(() => { })
+        );
+      },
+      error: e => { msH264Err = 'H.264 编码异常: ' + e.message; console.warn(msH264Err); msStopH264(); },
+    });
+    msH264Enc.configure(cfg);
+    msH264Err = '';
+  } catch (e) {
+    msH264Err = 'VideoEncoder 初始化失败: ' + e.message;
+    console.warn(msH264Err);
+    msStopH264();
+  } finally {
+    msH264Init = false;
+  }
 }
 
 function msStartH264() {
-  if (msH264Timer || typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return;
+  if (msH264Timer) return;
+  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
+    msH264Err = '当前环境不支持 WebCodecs VideoEncoder，1078 推流将回退彩条';
+    return;
+  }
   const ch = msCh;
   let frameIdx = 0;
   msH264Timer = setInterval(() => {
     const v = $('#msVideo');
-    if (!v.videoWidth || v.readyState < 2) return;
+    if (!v.videoWidth || v.readyState < 2 || msH264Init) return;
     // 宽高按偶数对齐，最大宽度 640
     const w = Math.min(v.videoWidth, 640) & ~1;
     const h = Math.round(v.videoHeight * w / v.videoWidth) & ~1;
     if (w < 16 || h < 16) return;
     const dims = `${w}x${h}`;
     if (!msH264Enc || msH264Enc.state === 'closed' || msH264Dims !== dims) {
-      if (msH264Enc) { try { msH264Enc.close(); } catch (_) { } }
+      if (msH264Enc) { try { msH264Enc.close(); } catch (_) { } msH264Enc = null; }
       msH264Dims = dims;
       frameIdx = 0;
-      try {
-        msH264Enc = new VideoEncoder({
-          output: chunk => {
-            const buf = new Uint8Array(chunk.byteLength);
-            chunk.copyTo(buf);
-            fetch(api('h264') + '?ch=' + ch + '&key=' + (chunk.type === 'key' ? 1 : 0), { method: 'POST', body: buf }).catch(() => { });
-          },
-          error: e => { console.warn('H264 编码异常:', e); msStopH264(); },
-        });
-        msH264Enc.configure({
-          codec: 'avc1.42E01E',
-          width: w,
-          height: h,
-          bitrate: 500000,
-          framerate: 15,
-          latencyMode: 'realtime',
-          avc: { format: 'annexb' },
-        });
-      } catch (e) {
-        console.warn('VideoEncoder 初始化失败，1078 推流回退彩条:', e);
-        msStopH264();
-        return;
-      }
+      msOpenH264(w, h, ch);
+      return;
     }
     if (msH264Enc.state !== 'configured' || msH264Enc.encodeQueueSize > 3) return;
     try {
@@ -451,7 +481,10 @@ function renderMs(s) {
     body = (frameText ? `视频循环播放，${frameText}。` : '视频加载中…') + staleTip
       + `图片附件截取当前播放画面（多张按 2 秒间隔取不同时刻）；${recNote}；${clipText}。`;
   }
-  $('#msHint').textContent = msChName() + '：' + body + stampTip + inhTip;
+  const h264Tip = (src === 'camera' || src === 'video') && !camIdle
+    ? (msH264Err ? ` 1078 推流：${msH264Err}。` : msH264Cnt > 0 ? ` 1078 实时 H.264 已推送 ${msH264Cnt} 帧。` : ' 1078 实时 H.264 编码初始化中…。')
+    : '';
+  $('#msHint').textContent = msChName() + '：' + body + h264Tip + stampTip + inhTip;
 }
 
 onState(s => page === 'media' && renderMs(s));

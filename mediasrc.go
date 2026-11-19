@@ -295,7 +295,84 @@ type h264Buf struct {
 
 type h264Ring struct {
 	seq   uint64
+	sps   []byte
+	pps   []byte
 	items []h264Buf
+}
+
+// splitAnnexBNALUs 将 Annex-B 码流拆分为不含起始码的 NALU 切片（兼容 3/4 字节起始码）。
+func splitAnnexBNALUs(b []byte) [][]byte {
+	var nalus [][]byte
+	for {
+		i := bytes.Index(b, []byte{0, 0, 1})
+		if i < 0 {
+			break
+		}
+		start := i + 3
+		j := bytes.Index(b[start:], []byte{0, 0, 1})
+		end := len(b)
+		if j >= 0 {
+			end = start + j
+			if end > start && b[end-1] == 0 {
+				end--
+			}
+		}
+		if end > start {
+			nalus = append(nalus, b[start:end])
+		}
+		if j < 0 {
+			break
+		}
+		b = b[end:]
+	}
+	return nalus
+}
+
+// normalizeH264Frame 提取并缓存 SPS/PPS，确保每个关键帧都自带 SPS/PPS 且统一 4 字节起始码。
+func normalizeH264Frame(r *h264Ring, key bool, data []byte) (bool, []byte) {
+	nalus := splitAnnexBNALUs(data)
+	if len(nalus) == 0 {
+		return key, data
+	}
+	var hasSPS, hasPPS, hasIDR bool
+	for _, n := range nalus {
+		switch n[0] & 0x1F {
+		case 7:
+			hasSPS = true
+			r.sps = append([]byte(nil), n...)
+		case 8:
+			hasPPS = true
+			r.pps = append([]byte(nil), n...)
+		case 5:
+			hasIDR = true
+		}
+	}
+	if hasIDR {
+		key = true
+	}
+	out := make([]byte, 0, len(data)+len(r.sps)+len(r.pps)+16)
+	appendNAL := func(n []byte) {
+		out = append(out, 0, 0, 0, 1)
+		out = append(out, n...)
+	}
+	if key {
+		if !hasSPS && len(r.sps) > 0 {
+			appendNAL(r.sps)
+		}
+		if !hasPPS && len(r.pps) > 0 {
+			appendNAL(r.pps)
+		}
+	}
+	for _, n := range nalus {
+		if n[0]&0x1F == 9 { // 跳过 AUD，避免部分 1078 播放器解析异常
+			continue
+		}
+		appendNAL(n)
+	}
+	if len(out) == 0 {
+		return key, data
+	}
+	return key, out
 }
 
 func (t *Terminal) setH264(ch int, key bool, data []byte) error {
@@ -315,8 +392,9 @@ func (t *Terminal) setH264(ch int, key bool, data []byte) error {
 		r = &h264Ring{}
 		t.h264[k] = r
 	}
+	key, norm := normalizeH264Frame(r, key, data)
 	r.seq++
-	r.items = append(r.items, h264Buf{data: data, key: key, seq: r.seq, at: time.Now()})
+	r.items = append(r.items, h264Buf{data: norm, key: key, seq: r.seq, at: time.Now()})
 	if len(r.items) > 45 {
 		r.items = r.items[len(r.items)-45:]
 	}
