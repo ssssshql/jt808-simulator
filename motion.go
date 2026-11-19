@@ -118,6 +118,12 @@ func (t *Terminal) routePoints() [][2]float64 {
 
 // evalAlarms 按参数 0x0055~0x005C 判定。调用方持有 t.mu
 func (t *Terminal) evalAlarms(dt int) {
+	if !t.Cfg.AutoAlarms {
+		for _, bit := range []int{1, 2, 13, 14, 15, 18, 19} {
+			t.setAuto(bit, false)
+		}
+		return
+	}
 	day := time.Now().Format("20060102")
 	if t.DayKey != day {
 		t.DayKey, t.DayDrive = day, 0

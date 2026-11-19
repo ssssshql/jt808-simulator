@@ -50,6 +50,7 @@ func (t *Terminal) Do(typ string, p map[string]any) error {
 		if _, ok := p["speed"]; ok {
 			t.motion.Speed = float64(max(min(pint(p, "speed", 60), 220), 0))
 		}
+		t.markDirty()
 		t.mu.Unlock()
 	case "setPosition":
 		lng, err1 := strconv.ParseFloat(pstr(p, "lng", ""), 64)
@@ -331,7 +332,7 @@ func (t *Terminal) setConfig(p map[string]any) error {
 	if _, ok := p["plateColor"]; ok {
 		c.PlateColor = pint(p, "plateColor", c.PlateColor)
 	}
-	for k, dst := range map[string]*bool{"autoReconnect": &c.AutoReconnect, "autoAttach": &c.AutoAttach, "upRsa": &c.UpRSA} {
+	for k, dst := range map[string]*bool{"autoReconnect": &c.AutoReconnect, "autoAttach": &c.AutoAttach, "upRsa": &c.UpRSA, "autoAlarms": &c.AutoAlarms} {
 		if _, ok := p[k]; ok {
 			*dst = pint(p, k, 0) == 1
 		}

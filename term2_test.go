@@ -18,7 +18,7 @@ func TestJT1078(t *testing.T) {
 	newTestTerm(t, p, "2019")
 	p.send(0x9003, nil)
 	m := p.expect(0x1003, 5*time.Second, nil)
-	if !bytes.Equal(m.Body, []byte{6, 1, 0, 1, 1, 64, 1, 98, 4, 4}) {
+	if !bytes.Equal(m.Body, []byte{6, 1, 0, 1, 1, 64, 1, 98, avChannels, avChannels}) {
 		t.Fatalf("1003 %X", m.Body)
 	}
 	ms, _ := net.Listen("tcp", "127.0.0.1:0")

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const avChannels = 4
+const avChannels = 16
 
 func init() {
 	handlers[0x9003] = (*Terminal).h9003

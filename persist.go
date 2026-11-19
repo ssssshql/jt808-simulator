@@ -90,6 +90,12 @@ func (t *Terminal) load() {
 		s.Menus = map[int]string{}
 	}
 	t.Saved = s
+	if s.Motion.Mode != "" {
+		t.motion.Mode = s.Motion.Mode
+	}
+	if s.Motion.Speed > 0 {
+		t.motion.Speed = s.Motion.Speed
+	}
 	t.rsaKey = nil
 	t.rp = replayRun{}
 	t.logf("已加载终端状态 %s（参数 %d 项，区域 %d 个，多媒体 %d 条，盲区 %d 条）", f, len(s.Params), len(s.Areas), len(s.Media), len(s.Blind))
@@ -101,6 +107,7 @@ func (t *Terminal) save() {
 	if f == "" {
 		return
 	}
+	t.Saved.Motion = Motion{Mode: t.motion.Mode, Speed: t.motion.Speed}
 	b, err := json.MarshalIndent(&t.Saved, "", " ")
 	if err != nil {
 		return

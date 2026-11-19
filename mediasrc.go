@@ -58,10 +58,10 @@ type clipBuf struct {
 func chKey(ch int) string { return strconv.Itoa(ch) }
 
 func validCh(ch int) bool {
-	if ch == 0 {
+	if ch == 0 || (ch >= 1 && ch <= avChannels) {
 		return true
 	}
-	for _, c := range mediaChs {
+	for _, c := range []int{64, 65, 66, 67} {
 		if c == ch {
 			return true
 		}

@@ -440,6 +440,7 @@ $('#cfgConn').innerHTML = CFG_CONN.map(cfgInput).join('');
 $('#cfgDev').innerHTML = CFG_DEV.map(cfgInput).join('');
 $('#cfgBehave').innerHTML = `
   <label class="switch"><input type="checkbox" id="b_autoReconnect"><span></span>断线自动重连（2s→60s 退避，主服务器失败 3 次后交替尝试备份服务器）</label>
+  <label class="switch"><input type="checkbox" id="b_autoAlarms"><span></span>长时间运行自动触发报警（超速、疲劳驾驶、超时驾驶/停车）</label>
   <label class="switch"><input type="checkbox" id="b_autoAttach"><span></span>收到 9208 自动上传报警附件</label>
   <div class="field"><label class="lbl" for="c_attachHost">附件服务器 IP 覆盖</label><input id="c_attachHost" data-cfg="attachHost" placeholder="为空时使用 9208 下发地址"></div>
   <label class="switch"><input type="checkbox" id="b_upRsa"><span></span>上行 RSA 加密（消息体属性 bit10，用平台 8A00 公钥加密）</label>
@@ -450,7 +451,7 @@ $('#cfgBehave').innerHTML = `
     <div class="field span2"><label class="lbl" for="b_reply8500">8500 车辆控制应答方式</label><select id="b_reply8500">
       <option value="0500">只回 0500 车辆控制应答（默认）</option><option value="ack0500">先回 0001 通用应答，再回 0500</option></select></div>
   </div>`;
-for (const k of ['autoReconnect', 'autoAttach', 'upRsa'])
+for (const k of ['autoReconnect', 'autoAlarms', 'autoAttach', 'upRsa'])
   $('#b_' + k).onchange = e => act('setConfig', { [k]: e.target.checked ? 1 : 0 }, null, '已保存');
 $('#b_reply').onchange = e => act('setReply', { mode: e.target.value }, null, '应答策略已切换');
 $('#b_delay').onchange = e => act('setReply', { delay: e.target.value }, null, '应答延迟已设置');
@@ -525,7 +526,7 @@ function renderConfig(s, force) {
   $('#cfgLock').hidden = !online;
   ['host', 'port', 'transport', 'phone', 'version'].forEach(k => $('#c_' + k).disabled = online);
   $('#c_safetyStd').disabled = online && c.version === '2013'; // 2013 终端切换粤标会改变帧格式
-  $('#b_autoReconnect').checked = c.autoReconnect; $('#b_autoAttach').checked = c.autoAttach; $('#b_upRsa').checked = c.upRsa;
+  $('#b_autoReconnect').checked = c.autoReconnect; $('#b_autoAlarms').checked = !!c.autoAlarms; $('#b_autoAttach').checked = c.autoAttach; $('#b_upRsa').checked = c.upRsa;
   $('#rsaNote').textContent = s.rsa.platKey ? '已收到平台 RSA 公钥。' : '尚未收到平台 8A00 公钥：开启后在收到公钥前仍以明文发送。';
   $('#b_reply').value = s.reply.mode; setVal('b_delay', s.reply.delay);
   if (!editing.has('b_reply8500')) $('#b_reply8500').value = c.reply8500 || '0500';

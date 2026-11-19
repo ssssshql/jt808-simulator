@@ -266,6 +266,7 @@ func TestNewParamsAndExtraInfo(t *testing.T) {
 		t.Fatalf("0077 解析 %v", f)
 	}
 	// 违规行驶时段内行驶 -> 报警位 bit15；扩展信号 / IO / 模拟量
+	term.Do("setConfig", map[string]any{"autoAlarms": float64(1)})
 	term.Do("setSignal", map[string]any{"bit": float64(3), "on": float64(1)})
 	term.Do("setIO", map[string]any{"bit": float64(1), "on": float64(1)})
 	term.Do("setAnalog", map[string]any{"ad0": float64(100), "ad1": float64(200)})

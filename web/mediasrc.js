@@ -454,6 +454,6 @@ function renderMs(s) {
   $('#msHint').textContent = msChName() + '：' + body + stampTip + inhTip;
 }
 
-onState(s => page === 'adas' && renderMs(s));
-onPage('adas', () => S && renderMs(S));
+onState(s => page === 'media' && renderMs(s));
+onPage('media', () => S && renderMs(S));
 onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); });

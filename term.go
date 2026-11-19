@@ -36,6 +36,7 @@ type Config struct {
 	MediaSrc      string            `json:"mediaSrc,omitempty"`  // 附件画面来源（全部通道默认）：空 = 合成测试图；image / video / camera（见 mediasrc.go）
 	MediaCh       map[string]string `json:"mediaCh,omitempty"`   // 按通道覆盖：键为通道号 64/65/66/67，值同上；未列的通道沿用 MediaSrc
 	NoStamp       bool              `json:"noStamp,omitempty"`   // 附件画面不烧时间水印（默认烧，见 stamp.go）
+	AutoAlarms    bool              `json:"autoAlarms,omitempty"` // 长时间行驶/停车时是否自动判定超速/疲劳/超时停车等报警（默认关闭）
 }
 
 // transport 传输方式：udp 或 tcp（空/其它值按 tcp）
@@ -139,6 +140,7 @@ type Saved struct {
 	GD        GDState          `json:"gd"`                  // 粤标外设状态 / 异常信息 / 升级模拟
 	Tires     []int            `json:"tires,omitempty"`     // 0x05 胎压（2019），最多 30 个轮子，0~254
 	CabinTemp *int             `json:"cabinTemp,omitempty"` // 0x06 车厢温度（2019），℃
+	Motion    Motion           `json:"motion,omitempty"`    // 记住选中的运动模式与速度
 }
 
 type Terminal struct {
