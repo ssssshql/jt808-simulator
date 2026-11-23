@@ -213,6 +213,7 @@ type Terminal struct {
 	powerOff    bool
 	lastPhoto   map[int]time.Time
 	lastPhotoKm float64
+	talk        talkState
 	alarmSeq    int
 	gdSeq       int    // 粤标报警标识号序号：同一时间点从 0 累加
 	gdSeqKey    string // 上一次报警的秒级时间

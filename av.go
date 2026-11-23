@@ -179,6 +179,7 @@ func (t *Terminal) startStream(ip string, tcpPort, udpPort, ch, dataType int, ki
 	sim := bcd(t.Cfg.Phone, simLen)
 	t.mu.Unlock()
 	t.logf("通道 %d 开始推流 %s -> %s", ch, s.Kind, s.Target)
+	go t.readAVDown(s, conn)
 	go t.pump(s, conn, &rtpWriter{conn: conn, sim: sim, channel: ch}, playStart, playEnd)
 	return nil
 }
@@ -274,10 +275,15 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 			if !s.video.Load() {
 				media = media.Add(time.Duration(40*max(int(s.speed.Load()), 1)) * time.Millisecond)
 			}
-			pcm := make([]byte, 320)
-			for i := range pcm {
-				pcm[i] = alaw(int16(6000 * math.Sin(phase)))
-				phase += 2 * math.Pi * 440 / 8000
+			var pcm []byte
+			if mic, ok := t.popTalkUp(320); ok {
+				pcm = mic
+			} else {
+				pcm = make([]byte, 320)
+				for i := range pcm {
+					pcm[i] = alaw(int16(6000 * math.Sin(phase)))
+					phase += 2 * math.Pi * 440 / 8000
+				}
 			}
 			if err := w.write(6, 3, media, pcm); err != nil { // PT 6 = G.711A，数据类型 3 = 音频帧
 				return

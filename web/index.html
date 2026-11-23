@@ -358,7 +358,12 @@
             <p class="hint">生成真实 JPEG（带通道号与时间水印），0800 事件 + 0801 数据上传。</p>
           </div>
           <div class="card">
-            <div class="card-h"><h2>音视频推流</h2><span class="tag" id="streamN"></span></div>
+            <div class="card-h"><h2>音视频推流与语音对讲</h2><span class="tag" id="streamN"></span></div>
+            <div class="btns" style="margin-bottom:10px;align-items:center">
+              <button class="btn sm" id="talkBtn">开启麦克风对讲</button>
+              <label class="switch sm"><input type="checkbox" id="talkSpk" checked><span></span>播放下行语音</label>
+              <span class="muted" id="talkStat" style="font-size:12px"></span>
+            </div>
             <div id="streams"></div>
           </div>
         </div>

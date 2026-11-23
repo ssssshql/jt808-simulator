@@ -227,6 +227,7 @@ func newWebMux(m *Manager) http.Handler {
 	})
 	handle("GET /log", func(w http.ResponseWriter, r *http.Request, t *Terminal) { serveLog(w, r, t.logHub()) })
 	registerMediaSrcAPI(handle)
+	registerIntercomAPI(handle)
 	mux.HandleFunc("GET /api/syslog", func(w http.ResponseWriter, r *http.Request) { serveLog(w, r, hub) })
 
 	// 压力测试（进程级）

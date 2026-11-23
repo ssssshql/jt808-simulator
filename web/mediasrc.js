@@ -564,4 +564,174 @@ function msBootMedia(s) {
 
 onState(s => { syncMsImgMount(); if (page === 'media') renderMs(s); else msBootMedia(s); });
 onPage('media', () => { syncMsImgMount(); S && renderMs(S); });
-onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); });
+onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); talkStopAll(); });
+
+// ---------------- 1078 双向语音对讲（麦克风上行 G.711A + 平台下行 PCM 播放） ----------------
+let talkMicStream = null, talkCtx = null, talkNode = null, talkGain = null;
+let talkDownAbort = null, talkTxBytes = 0, talkRxBytes = 0, talkPlayAt = 0;
+
+function pcmToAlaw(s) {
+  let mask = 0xD5;
+  if (s < 0) { mask = 0x55; s = -s - 1; }
+  if (s > 32635) s = 32635;
+  let seg = 0;
+  for (let x = s >> 8; x > 0 && seg < 7; x >>= 1) seg++;
+  const out = seg === 0 ? ((s >> 4) & 0x0F) : ((seg << 4) | ((s >> (seg + 3)) & 0x0F));
+  return out ^ mask;
+}
+
+function talkEnsureCtx() {
+  if (!talkCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) throw new Error('当前环境不支持 Web Audio');
+    talkCtx = new AC();
+  }
+  if (talkCtx.state === 'suspended') talkCtx.resume().catch(() => { });
+  return talkCtx;
+}
+
+function talkUpdateUI() {
+  const btn = $('#talkBtn'), stat = $('#talkStat');
+  if (!btn || !stat) return;
+  const on = !!talkMicStream;
+  btn.textContent = on ? '关闭麦克风对讲' : '开启麦克风对讲';
+  btn.classList.toggle('primary', on);
+  if (!on && !talkDownAbort) {
+    stat.textContent = '未开启（默认上行 440Hz 测试音）';
+  } else {
+    stat.textContent = `${on ? '麦已开' : '仅监听'} · 上行 ${(talkTxBytes / 1024).toFixed(1)} KB · 下行 ${(talkRxBytes / 1024).toFixed(1)} KB`;
+  }
+}
+
+async function talkStartDown() {
+  if (talkDownAbort || !$('#talkSpk')?.checked) return;
+  let ctx;
+  try { ctx = talkEnsureCtx(); } catch (_) { return; }
+  const ac = new AbortController();
+  talkDownAbort = ac;
+  talkPlayAt = 0;
+  talkUpdateUI();
+  try {
+    const r = await fetch(api('intercom/down'), { signal: ac.signal, cache: 'no-store' });
+    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    const reader = r.body.getReader();
+    let tail = null;
+    while (!ac.signal.aborted) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || !value.length) continue;
+      let chunk = value;
+      if (tail !== null) {
+        chunk = new Uint8Array(value.length + 1);
+        chunk[0] = tail;
+        chunk.set(value, 1);
+        tail = null;
+      }
+      if (chunk.length & 1) {
+        tail = chunk[chunk.length - 1];
+        chunk = chunk.subarray(0, chunk.length - 1);
+      }
+      const n = chunk.length >> 1;
+      if (!n) continue;
+      talkRxBytes += chunk.length;
+      const buf = ctx.createBuffer(1, n, 8000);
+      const ch0 = buf.getChannelData(0);
+      const dv = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      for (let i = 0; i < n; i++) ch0[i] = dv.getInt16(i * 2, true) / 32768;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (talkPlayAt < now || talkPlayAt - now > 0.35) talkPlayAt = now + 0.04;
+      src.start(talkPlayAt);
+      talkPlayAt += n / 8000;
+      talkUpdateUI();
+    }
+  } catch (e) {
+    if (!ac.signal.aborted) console.warn('下行语音流中断:', e);
+  } finally {
+    if (talkDownAbort === ac) talkDownAbort = null;
+    talkUpdateUI();
+  }
+}
+
+function talkStopDown() {
+  if (talkDownAbort) { talkDownAbort.abort(); talkDownAbort = null; }
+  talkPlayAt = 0;
+  talkUpdateUI();
+}
+
+async function talkStartMic() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return toast('当前环境不支持麦克风采集（需 localhost 或 HTTPS）');
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    const ctx = talkEnsureCtx();
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(2048, 1, 1);
+    const gain = ctx.createGain();
+    gain.gain.value = 0; // 避免本地回声啸叫
+    const step = ctx.sampleRate / 8000;
+    let pos = 0, txBuf = [];
+    proc.onaudioprocess = e => {
+      if (!talkMicStream) return;
+      const inp = e.inputBuffer.getChannelData(0);
+      while (pos < inp.length) {
+        const i0 = Math.floor(pos), i1 = Math.min(i0 + 1, inp.length - 1), frac = pos - i0;
+        const sample = inp[i0] + (inp[i1] - inp[i0]) * frac;
+        const s16 = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
+        txBuf.push(pcmToAlaw(s16));
+        pos += step;
+      }
+      pos -= inp.length;
+      if (txBuf.length >= 640) {
+        const out = new Uint8Array(txBuf.splice(0, txBuf.length));
+        talkTxBytes += out.length;
+        fetch(api('intercom/up'), { method: 'POST', body: out }).catch(() => { });
+        talkUpdateUI();
+      }
+    };
+    src.connect(proc);
+    proc.connect(gain);
+    gain.connect(ctx.destination);
+    talkMicStream = stream;
+    talkNode = { src, proc };
+    talkGain = gain;
+    if ($('#talkSpk')?.checked) talkStartDown();
+    talkUpdateUI();
+    toast('已开启麦克风对讲', 'ok');
+  } catch (e) {
+    toast('麦克风打开失败：' + e.message);
+  }
+}
+
+function talkStopMic() {
+  if (talkNode) {
+    try { talkNode.src.disconnect(); talkNode.proc.disconnect(); } catch (_) { }
+    talkNode = null;
+  }
+  if (talkGain) { try { talkGain.disconnect(); } catch (_) { } talkGain = null; }
+  if (talkMicStream) { talkMicStream.getTracks().forEach(t => t.stop()); talkMicStream = null; }
+  talkUpdateUI();
+}
+
+function talkStopAll() {
+  talkStopMic();
+  talkStopDown();
+  talkTxBytes = 0;
+  talkRxBytes = 0;
+  if (talkCtx) { try { talkCtx.close(); } catch (_) { } talkCtx = null; }
+  talkUpdateUI();
+}
+
+$('#talkBtn')?.addEventListener('click', () => {
+  if (talkMicStream) talkStopMic(); else talkStartMic();
+});
+$('#talkSpk')?.addEventListener('change', e => {
+  if (e.target.checked) talkStartDown(); else talkStopDown();
+});
+talkUpdateUI();
