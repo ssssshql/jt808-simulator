@@ -86,6 +86,9 @@ func ulawToLinear(u byte) int16 {
 }
 
 func (t *Terminal) broadcastTalkDown(pt byte, payload []byte) {
+	if len(payload) > 4 && payload[0] == 0x00 && payload[1] == 0x01 && int(payload[2])*2 == len(payload)-4 && payload[3] == 0x00 {
+		payload = payload[4:] // 兼容海思 4 字节音频帧头 (00 01 <len/2> 00)
+	}
 	if len(payload) == 0 {
 		return
 	}
@@ -130,10 +133,19 @@ func (t *Terminal) subTalkDown() (chan []byte, func()) {
 	}
 }
 
-// parse1078AudioHeader 解析 1078 RTP 包头，返回 (pt, dtype, hdrTotalLen, bodyLen, ok)。
-// 兼容 2013（6 字节 SIM）与 2019（10 字节 SIM）两种包头长度。
+func isBCDBytes(b []byte) bool {
+	for _, v := range b {
+		if v>>4 > 9 || v&0x0F > 9 {
+			return false
+		}
+	}
+	return true
+}
+
+// parse1078Packet 解析 1078 RTP 包头，返回 (pt, dtype, totalLen, hdrLen, ok)。
+// 兼容 2013（6 字节 SIM）与 2019（10 字节 SIM）两种包头长度，并通过下一包魔数与 BCD 校验避免错位。
 func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrLen int, ok bool) {
-	if len(b) < 24 || b[0] != 0x30 || b[1] != 0x31 || b[2] != 0x63 || b[3] != 0x64 {
+	if len(b) < 24 || b[0] != 0x30 || b[1] != 0x31 || b[2] != 0x63 || b[3] != 0x64 || (b[4]&0xC0) != 0x80 {
 		return 0, 0, 0, 0, false
 	}
 	altSimLen := 10
@@ -141,7 +153,7 @@ func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrL
 		altSimLen = 6
 	}
 	for _, simLen := range []int{preferSimLen, altSimLen} {
-		if len(b) < 8+simLen+4 {
+		if len(b) < 8+simLen+4 || !isBCDBytes(b[8:8+simLen]) {
 			continue
 		}
 		dt := int(b[8+simLen+1] >> 4)
@@ -162,7 +174,11 @@ func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrL
 		if bl <= 0 || bl > 4096 {
 			continue
 		}
-		return b[5] & 0x7F, dt, hl + 2 + bl, hl + 2, true
+		tot := hl + 2 + bl
+		if len(b) >= tot+4 && (b[tot] != 0x30 || b[tot+1] != 0x31 || b[tot+2] != 0x63 || b[tot+3] != 0x64) {
+			continue
+		}
+		return b[5] & 0x7F, dt, tot, hl + 2, true
 	}
 	return 0, 0, 0, 0, false
 }

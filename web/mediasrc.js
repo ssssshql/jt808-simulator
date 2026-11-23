@@ -568,7 +568,7 @@ onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); talkStopAll(); });
 
 // ---------------- 1078 双向语音对讲（麦克风上行 G.711A + 平台下行 PCM 播放） ----------------
 let talkMicStream = null, talkCtx = null, talkNode = null, talkGain = null;
-let talkDownAbort = null, talkTxBytes = 0, talkRxBytes = 0, talkPlayAt = 0;
+let talkDownAbort = null, talkDownNode = null, talkTxBytes = 0, talkRxBytes = 0;
 
 function pcmToAlaw(s) {
   let mask = 0xD5;
@@ -609,7 +609,32 @@ async function talkStartDown() {
   try { ctx = talkEnsureCtx(); } catch (_) { return; }
   const ac = new AbortController();
   talkDownAbort = ac;
-  talkPlayAt = 0;
+  // 8kHz 单声道环形缓冲（最多 2 秒），通过 ScriptProcessor 连续线性插值播放，避免逐包启停导致电音/咔哒声
+  const ring = new Float32Array(16000);
+  let rIdx = 0, wIdx = 0, count = 0, phase = 0, primed = false;
+  const sp = ctx.createScriptProcessor(2048, 0, 1);
+  const ratio = 8000 / ctx.sampleRate;
+  sp.onaudioprocess = e => {
+    const out = e.outputBuffer.getChannelData(0);
+    if (!primed) {
+      if (count < 320) { out.fill(0); return; } // 先攒约 40ms 再起播
+      primed = true;
+    }
+    for (let i = 0; i < out.length; i++) {
+      if (count < 2) { out[i] = 0; primed = false; continue; }
+      const s0 = ring[rIdx], s1 = ring[(rIdx + 1) % ring.length];
+      out[i] = s0 + (s1 - s0) * phase;
+      phase += ratio;
+      while (phase >= 1) {
+        phase -= 1;
+        rIdx = (rIdx + 1) % ring.length;
+        count--;
+        if (count < 2) break;
+      }
+    }
+  };
+  sp.connect(ctx.destination);
+  talkDownNode = sp;
   talkUpdateUI();
   try {
     const r = await fetch(api('intercom/down'), { signal: ac.signal, cache: 'no-store' });
@@ -634,22 +659,24 @@ async function talkStartDown() {
       const n = chunk.length >> 1;
       if (!n) continue;
       talkRxBytes += chunk.length;
-      const buf = ctx.createBuffer(1, n, 8000);
-      const ch0 = buf.getChannelData(0);
       const dv = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      for (let i = 0; i < n; i++) ch0[i] = dv.getInt16(i * 2, true) / 32768;
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      const now = ctx.currentTime;
-      if (talkPlayAt < now || talkPlayAt - now > 0.35) talkPlayAt = now + 0.04;
-      src.start(talkPlayAt);
-      talkPlayAt += n / 8000;
+      for (let i = 0; i < n; i++) {
+        ring[wIdx] = dv.getInt16(i * 2, true) / 32768;
+        wIdx = (wIdx + 1) % ring.length;
+        if (count < ring.length) count++;
+        else rIdx = (rIdx + 1) % ring.length;
+      }
+      if (count > 3200) { // 缓冲超过 400ms 时丢弃旧样本以保持低延迟
+        const drop = count - 1600;
+        rIdx = (rIdx + drop) % ring.length;
+        count -= drop;
+      }
       talkUpdateUI();
     }
   } catch (e) {
     if (!ac.signal.aborted) console.warn('下行语音流中断:', e);
   } finally {
+    if (talkDownNode === sp) { try { sp.disconnect(); } catch (_) { } talkDownNode = null; }
     if (talkDownAbort === ac) talkDownAbort = null;
     talkUpdateUI();
   }
@@ -657,7 +684,7 @@ async function talkStartDown() {
 
 function talkStopDown() {
   if (talkDownAbort) { talkDownAbort.abort(); talkDownAbort = null; }
-  talkPlayAt = 0;
+  if (talkDownNode) { try { talkDownNode.disconnect(); } catch (_) { } talkDownNode = null; }
   talkUpdateUI();
 }
 
