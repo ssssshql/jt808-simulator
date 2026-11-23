@@ -235,6 +235,8 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 	tmp := make([]byte, 4096)
 	var buf []byte
 	loggedFirst := false
+	var rawWin, audioWin int
+	winAt := time.Now()
 	for {
 		select {
 		case <-s.stop:
@@ -243,6 +245,7 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 		}
 		n, err := conn.Read(tmp)
 		if n > 0 {
+			rawWin += n
 			buf = append(buf, tmp[:n]...)
 			for len(buf) >= 24 {
 				idx := bytes.Index(buf, magic)
@@ -271,12 +274,19 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 					t.logf("1078 下行首包: pt=%d dt=%d sim=%dB body=%dB", pt, dt, simLen, totalLen-hdrLen)
 				}
 				if dt == 3 {
+					audioWin++
 					t.broadcastTalkDown(pt, buf[hdrLen:totalLen])
 				}
 				buf = buf[totalLen:]
 			}
 			if len(buf) > 65536 {
 				buf = buf[:0]
+			}
+			if time.Since(winAt) >= 3*time.Second {
+				if rawWin > 0 && audioWin == 0 {
+					t.logf("1078 下行异常: 3秒收到 %dB 但未解析出音频帧（缓冲 %dB hex=%X）", rawWin, len(buf), buf[:min(len(buf), 36)])
+				}
+				rawWin, audioWin, winAt = 0, 0, time.Now()
 			}
 		}
 		if err != nil {
