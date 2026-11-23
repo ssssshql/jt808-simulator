@@ -562,13 +562,18 @@ function msBootMedia(s) {
   }
 }
 
-onState(s => { syncMsImgMount(); if (page === 'media') renderMs(s); else msBootMedia(s); });
+onState(s => {
+  syncMsImgMount();
+  if (page === 'media') renderMs(s); else msBootMedia(s);
+  if (s.streams?.length && $('#talkSpk')?.checked && !talkDownAbort && !talkDownBusy) talkStartDown();
+});
 onPage('media', () => { syncMsImgMount(); S && renderMs(S); });
 onSwitch(() => { msStop(); msUpTick = 0; msCamTried.clear(); talkStopAll(); });
 
 // ---------------- 1078 双向语音对讲（麦克风上行 G.711A + 平台下行 PCM 播放） ----------------
 let talkMicStream = null, talkCtx = null, talkNode = null, talkGain = null;
-let talkDownAbort = null, talkDownNode = null, talkTxBytes = 0, talkRxBytes = 0;
+let talkDownAbort = null, talkDownNode = null, talkDownKeep = null, talkDownBusy = false;
+let talkTxBytes = 0, talkRxBytes = 0;
 
 function pcmToAlaw(s) {
   let mask = 0xD5;
@@ -598,21 +603,33 @@ function talkUpdateUI() {
   btn.classList.toggle('primary', on);
   if (!on && !talkDownAbort) {
     stat.textContent = '麦未开（上行静音）；点「开启麦克风对讲」即可双向通话';
+  } else if (talkDownAbort && talkCtx?.state === 'suspended') {
+    stat.textContent = `下行已连接（请点击页面任意处以激活扬声器）· 下行 ${(talkRxBytes / 1024).toFixed(1)} KB`;
   } else {
     stat.textContent = `${on ? '麦已开' : '仅监听'} · 上行 ${(talkTxBytes / 1024).toFixed(1)} KB · 下行 ${(talkRxBytes / 1024).toFixed(1)} KB`;
   }
 }
 
 async function talkStartDown() {
-  if (talkDownAbort || !$('#talkSpk')?.checked) return;
+  if (talkDownAbort || talkDownBusy || !$('#talkSpk')?.checked) return;
   let ctx;
   try { ctx = talkEnsureCtx(); } catch (_) { return; }
+  if (ctx.state === 'suspended') {
+    const unlock = () => ctx.resume().then(talkUpdateUI).catch(() => { });
+    document.addEventListener('pointerdown', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
+  }
   const ac = new AbortController();
   talkDownAbort = ac;
+  talkDownBusy = true;
   // 8kHz 单声道环形缓冲（最多 2 秒），通过 ScriptProcessor 连续线性插值播放，避免逐包启停导致电音/咔哒声
   const ring = new Float32Array(16000);
   let rIdx = 0, wIdx = 0, count = 0, phase = 0, primed = false;
-  const sp = ctx.createScriptProcessor(2048, 0, 1);
+  // 用 1 路静音输入驱动 ScriptProcessor，确保各版本 Chromium/WebView2 都会稳定触发 onaudioprocess
+  const osc = ctx.createOscillator();
+  const zGain = ctx.createGain();
+  zGain.gain.value = 0;
+  const sp = ctx.createScriptProcessor(2048, 1, 1);
   const ratio = 8000 / ctx.sampleRate;
   sp.onaudioprocess = e => {
     const out = e.outputBuffer.getChannelData(0);
@@ -633,8 +650,12 @@ async function talkStartDown() {
       }
     }
   };
+  osc.connect(zGain);
+  zGain.connect(sp);
   sp.connect(ctx.destination);
+  osc.start();
   talkDownNode = sp;
+  talkDownKeep = { osc, zGain };
   talkUpdateUI();
   try {
     const r = await fetch(api('intercom/down'), { signal: ac.signal, cache: 'no-store' });
@@ -676,15 +697,19 @@ async function talkStartDown() {
   } catch (e) {
     if (!ac.signal.aborted) console.warn('下行语音流中断:', e);
   } finally {
+    if (talkDownKeep) { try { talkDownKeep.osc.stop(); talkDownKeep.osc.disconnect(); talkDownKeep.zGain.disconnect(); } catch (_) { } talkDownKeep = null; }
     if (talkDownNode === sp) { try { sp.disconnect(); } catch (_) { } talkDownNode = null; }
     if (talkDownAbort === ac) talkDownAbort = null;
+    talkDownBusy = false;
     talkUpdateUI();
   }
 }
 
 function talkStopDown() {
   if (talkDownAbort) { talkDownAbort.abort(); talkDownAbort = null; }
+  if (talkDownKeep) { try { talkDownKeep.osc.stop(); talkDownKeep.osc.disconnect(); talkDownKeep.zGain.disconnect(); } catch (_) { } talkDownKeep = null; }
   if (talkDownNode) { try { talkDownNode.disconnect(); } catch (_) { } talkDownNode = null; }
+  talkDownBusy = false;
   talkUpdateUI();
 }
 
