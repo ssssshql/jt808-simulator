@@ -597,7 +597,7 @@ function talkUpdateUI() {
   btn.textContent = on ? '关闭麦克风对讲' : '开启麦克风对讲';
   btn.classList.toggle('primary', on);
   if (!on && !talkDownAbort) {
-    stat.textContent = '未开启（默认上行 440Hz 测试音）';
+    stat.textContent = '麦未开（上行静音）；点「开启麦克风对讲」即可双向通话';
   } else {
     stat.textContent = `${on ? '麦已开' : '仅监听'} · 上行 ${(talkTxBytes / 1024).toFixed(1)} KB · 下行 ${(talkRxBytes / 1024).toFixed(1)} KB`;
   }

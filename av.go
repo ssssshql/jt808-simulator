@@ -6,7 +6,6 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -218,7 +217,7 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 	at := time.NewTicker(40 * time.Millisecond)
 	defer vt.Stop()
 	defer at.Stop()
-	fi, phase := 0, 0.0
+	fi := 0
 	var liveSeq uint64
 	liveNeedKey := true
 	w.lastI, w.lastF = media, media
@@ -279,14 +278,16 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 			if mic, ok := t.popTalkUp(320); ok {
 				pcm = mic
 			} else {
-				pcm = make([]byte, 320)
-				for i := range pcm {
-					pcm[i] = alaw(int16(6000 * math.Sin(phase)))
-					phase += 2 * math.Pi * 440 / 8000
-				}
+				pcm = bytes.Repeat([]byte{0xD5}, 320) // 未开启麦克风时发送 G.711A 静音，避免 440Hz 持续蜂鸣杂音
 			}
 			if err := w.write(6, 3, media, pcm); err != nil { // PT 6 = G.711A，数据类型 3 = 音频帧
 				return
+			}
+			if !s.video.Load() {
+				n := atomic.AddInt64(&w.frames, 1)
+				t.mu.Lock()
+				s.Frames = n
+				t.mu.Unlock()
 			}
 		}
 	}
