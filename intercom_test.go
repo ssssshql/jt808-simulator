@@ -88,3 +88,22 @@ func TestIntercomTwoWay(t *testing.T) {
 		t.Fatalf("9102 关闭对讲 result=%d", r)
 	}
 }
+
+func TestParse1078Packet6ByteSIMWithPrefer10(t *testing.T) {
+	// 模拟 2019 终端 (preferSimLen=10) 收到 2013 格式 (6 字节 SIM) 下行音频包，
+	// 且包内时间戳前 2 字节 (0x00, 0x01) + 负载前 2 字节 (0x05, 0x20) 恰好满足 10 字节 SIM 的 BCD/长度条件
+	payload := append([]byte{0x05, 0x20}, bytes.Repeat([]byte{0xD5}, 318)...)
+	pkt := cat(
+		[]byte{0x30, 0x31, 0x63, 0x64, 0x81, 0x86},
+		u16(1),
+		bcd("13800000001", 6),
+		[]byte{1, 0x30},
+		[]byte{0x00, 0x01, 0x30, 0x00, 0, 0, 0, 1},
+		u16(len(payload)),
+		payload,
+	)
+	pt, dt, tot, hdr, sim, ok := parse1078Packet(pkt, 10)
+	if !ok || pt != 6 || dt != 3 || sim != 6 || tot != len(pkt) || hdr != 26 {
+		t.Fatalf("误判 6 字节 SIM 包: ok=%v pt=%d dt=%d sim=%d tot=%d(want %d) hdr=%d", ok, pt, dt, sim, tot, len(pkt), hdr)
+	}
+}

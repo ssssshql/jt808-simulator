@@ -148,7 +148,8 @@ func isBCDBytes(b []byte) bool {
 }
 
 // parse1078Packet 解析 1078 RTP 包头，返回 (pt, dtype, totalLen, hdrLen, simLen, ok)。
-// 兼容 2013（6 字节 SIM）与 2019（10 字节 SIM）两种包头长度，并通过下一包魔数与 BCD 校验避免错位。
+// 兼容 2013（6 字节 SIM）与 2019（10 字节 SIM）两种包头长度：
+// 优先匹配下一包魔数 "01cd" 命中的长度，其次匹配恰好等于当前缓冲长度的包，避免把 6 字节 SIM 误判为 10 字节 SIM。
 func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrLen, usedSim int, ok bool) {
 	if len(b) < 24 || b[0] != 0x30 || b[1] != 0x31 || b[2] != 0x63 || b[3] != 0x64 {
 		return 0, 0, 0, 0, 0, false
@@ -157,12 +158,24 @@ func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrL
 	if preferSimLen == 10 {
 		altSimLen = 6
 	}
+	type cand struct {
+		pt         byte
+		dt         int
+		tot, hl    int
+		sim        int
+		nextMagic  bool
+		exactLen   bool
+		reasonable bool
+	}
+	var cands []cand
 	for _, simLen := range []int{preferSimLen, altSimLen} {
 		if len(b) < 8+simLen+4 || !isBCDBytes(b[8:8+simLen]) {
 			continue
 		}
+		ch := b[8+simLen]
 		dt := int(b[8+simLen+1] >> 4)
-		if dt > 4 {
+		sub := int(b[8+simLen+1] & 0x0F)
+		if ch == 0 || dt > 4 || sub > 3 {
 			continue
 		}
 		hl := 8 + simLen + 2
@@ -180,10 +193,32 @@ func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrL
 			continue
 		}
 		tot := hl + 2 + bl
-		if len(b) >= tot+4 && (b[tot] != 0x30 || b[tot+1] != 0x31 || b[tot+2] != 0x63 || b[tot+3] != 0x64) {
+		hasNext := len(b) >= tot+4 && b[tot] == 0x30 && b[tot+1] == 0x31 && b[tot+2] == 0x63 && b[tot+3] == 0x64
+		if len(b) >= tot+4 && !hasNext {
 			continue
 		}
-		return b[5] & 0x7F, dt, tot, hl + 2, simLen, true
+		cands = append(cands, cand{
+			pt:         b[5] & 0x7F,
+			dt:         dt,
+			tot:        tot,
+			hl:         hl + 2,
+			sim:        simLen,
+			nextMagic:  hasNext,
+			exactLen:   len(b) == tot,
+			reasonable: dt != 3 || bl <= 1024,
+		})
+	}
+	for _, want := range []func(cand) bool{
+		func(c cand) bool { return c.nextMagic },
+		func(c cand) bool { return c.exactLen },
+		func(c cand) bool { return c.reasonable },
+		func(c cand) bool { return true },
+	} {
+		for _, c := range cands {
+			if want(c) {
+				return c.pt, c.dt, c.tot, c.hl, c.sim, true
+			}
+		}
 	}
 	return 0, 0, 0, 0, 0, false
 }
