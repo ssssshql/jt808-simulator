@@ -564,7 +564,7 @@ function msBootMedia(s) {
 
 onState(s => {
   syncMsImgMount();
-  if (page === 'media') renderMs(s); else msBootMedia(s);
+  if (page === 'media') { renderMs(s); talkUpdateUI(); } else msBootMedia(s);
   if (s.streams?.length && $('#talkSpk')?.checked && !talkDownAbort && !talkDownBusy) talkStartDown();
 });
 onPage('media', () => { syncMsImgMount(); S && renderMs(S); });
@@ -601,12 +601,13 @@ function talkUpdateUI() {
   const on = !!talkMicStream;
   btn.textContent = on ? '关闭麦克风对讲' : '开启麦克风对讲';
   btn.classList.toggle('primary', on);
+  const tcpInfo = (typeof S?.talkRxRaw === 'number' && S.talkRxRaw > 0) ? ` · TCP收 ${(S.talkRxRaw / 1024).toFixed(1)} KB/${S.talkRxFrames || 0}帧` : '';
   if (!on && !talkDownAbort) {
-    stat.textContent = '麦未开（上行静音）；点「开启麦克风对讲」即可双向通话';
+    stat.textContent = '麦未开（上行静音）；点「开启麦克风对讲」即可双向通话' + tcpInfo;
   } else if (talkDownAbort && talkCtx?.state === 'suspended') {
-    stat.textContent = `下行已连接（请点击页面任意处以激活扬声器）· 下行 ${(talkRxBytes / 1024).toFixed(1)} KB`;
+    stat.textContent = `下行已连接（请点击页面任意处以激活扬声器）· 播放 ${(talkRxBytes / 1024).toFixed(1)} KB${tcpInfo}`;
   } else {
-    stat.textContent = `${on ? '麦已开' : '仅监听'} · 上行 ${(talkTxBytes / 1024).toFixed(1)} KB · 下行 ${(talkRxBytes / 1024).toFixed(1)} KB`;
+    stat.textContent = `${on ? '麦已开' : '仅监听'} · 上行 ${(talkTxBytes / 1024).toFixed(1)} KB · 播放 ${(talkRxBytes / 1024).toFixed(1)} KB${tcpInfo}`;
   }
 }
 

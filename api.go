@@ -102,8 +102,10 @@ func (t *Terminal) State() map[string]any {
 		"rsa":        map[string]any{"platKey": t.PlatRSA.pub() != nil, "upEncrypt": c.UpRSA},
 		"replay":     t.replayView(),
 		"safety":     t.safetyView(),
-		"mediaSrc":   t.mediaView(),
-		"mediaStamp": !c.NoStamp, // 附件画面是否烧入时间水印（见 stamp.go）
+		"mediaSrc":     t.mediaView(),
+		"mediaStamp":   !c.NoStamp, // 附件画面是否烧入时间水印（见 stamp.go）
+		"talkRxRaw":    t.talk.rxRawBytes.Load(),
+		"talkRxFrames": t.talk.rxFrames.Load(),
 	}
 }
 

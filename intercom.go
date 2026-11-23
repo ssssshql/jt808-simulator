@@ -20,6 +20,7 @@ type talkState struct {
 	upBuf            []byte
 	upAt             time.Time
 	subs             map[chan []byte]struct{}
+	rxRawBytes       atomic.Int64
 	rxFrames         atomic.Int64
 	txMic            atomic.Int64
 	unsupportedLogAt time.Time
@@ -245,6 +246,7 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 		}
 		n, err := conn.Read(tmp)
 		if n > 0 {
+			t.talk.rxRawBytes.Add(int64(n))
 			rawWin += n
 			buf = append(buf, tmp[:n]...)
 			for len(buf) >= 24 {
