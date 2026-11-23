@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -157,6 +158,11 @@ func (t *Terminal) startStream(ip string, tcpPort, udpPort, ch, dataType int, ki
 	if port == 0 {
 		network, port = "udp", udpPort
 	}
+	t.mu.Lock()
+	if h := strings.TrimSpace(t.Cfg.AVHost); h != "" {
+		ip = h
+	}
+	t.mu.Unlock()
 	addr := net.JoinHostPort(ip, strconv.Itoa(port))
 	conn, err := net.DialTimeout(network, addr, 10*time.Second)
 	if err != nil {

@@ -28,7 +28,8 @@ type Config struct {
 	HwVer         string            `json:"hwVer"`
 	FwVer         string            `json:"fwVer"`
 	AutoReconnect bool              `json:"autoReconnect"`
-	AttachHost    string            `json:"attachHost"` // 覆盖 9208 下发的附件服务器 IP（为空用下发值）
+	AttachHost    string            `json:"attachHost"`           // 覆盖 9208 下发的附件服务器 IP（为空用下发值）
+	AVHost        string            `json:"avHost,omitempty"`     // 覆盖 9101/9201 下发的 1078 媒体服务器 IP（为空用下发值）
 	AutoAttach    bool              `json:"autoAttach"`
 	UpRSA         bool              `json:"upRsa"`                // 上行RSA加密（需已收到平台 8A00 公钥）
 	Transport     string            `json:"transport,omitempty"`  // tcp（默认）/ udp

@@ -309,7 +309,7 @@ func (t *Terminal) setConfig(p map[string]any) error {
 	}
 	for k, dst := range map[string]*string{"host": &c.Host, "phone": &c.Phone, "version": &c.Version, "token": &c.Token,
 		"plate": &c.Plate, "vin": &c.VIN, "deviceId": &c.DeviceID, "model": &c.Model, "maker": &c.Maker, "iccid": &c.ICCID,
-		"imei": &c.IMEI, "fwVer": &c.FwVer, "hwVer": &c.HwVer, "attachHost": &c.AttachHost} {
+		"imei": &c.IMEI, "fwVer": &c.FwVer, "hwVer": &c.HwVer, "attachHost": &c.AttachHost, "avHost": &c.AVHost} {
 		set(k, dst)
 	}
 	if v, ok := p["transport"]; ok {

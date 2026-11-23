@@ -501,6 +501,7 @@ $('#cfgBehave').innerHTML = `
   <div class="field"><label class="lbl" for="b_blindCap">盲区补报队列上限</label><div class="field-row"><div class="input-unit" style="width:180px"><input id="b_blindCap" type="number" min="10" max="100000" step="100"><span>条</span></div><button class="btn sm" id="b_blindSet">应用</button><span class="muted" id="b_blindInfo"></span></div>
     <span class="muted">离线或 0200 重传失败的位置先存入队列，上线后以 0704 补报；超出上限丢弃最旧的并告警（默认 5000，范围 10~100000）</span></div>
   <div class="field"><label class="lbl" for="c_attachHost">附件服务器 IP 覆盖</label><input id="c_attachHost" data-cfg="attachHost" placeholder="为空时使用 9208 下发地址"></div>
+  <div class="field"><label class="lbl" for="c_avHost">1078 媒体服务器 IP 覆盖</label><input id="c_avHost" data-cfg="avHost" placeholder="为空时使用 9101/9201 下发地址"></div>
   <label class="switch"><input type="checkbox" id="b_upRsa"><span></span>上行 RSA 加密（消息体属性 bit10，用平台 8A00 公钥加密）</label>
   <span class="muted" id="rsaNote"></span>
   <div class="form2">
@@ -521,7 +522,7 @@ $('#b_blindSet').onclick = e => {
 $('#b_blindCap').addEventListener('keydown', e => { if (e.key === 'Enter') $('#b_blindSet').click(); });
 $('#b_reply8500').onchange = e => act('setConfig', { reply8500: e.target.value }, null, '8500 应答方式已保存');
 
-const ALL_CFG = CFG_CONN.concat(CFG_DEV, [['attachHost']]);
+const ALL_CFG = CFG_CONN.concat(CFG_DEV, [['attachHost'], ['avHost']]);
 function cfgValues() {
   const p = {};
   ALL_CFG.forEach(([k]) => p[k] = $('#c_' + k).value.trim());
