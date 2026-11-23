@@ -16,12 +16,13 @@ import (
 )
 
 type talkState struct {
-	mu       sync.Mutex
-	upBuf    []byte
-	upAt     time.Time
-	subs     map[chan []byte]struct{}
-	rxFrames atomic.Int64
-	txMic    atomic.Int64
+	mu               sync.Mutex
+	upBuf            []byte
+	upAt             time.Time
+	subs             map[chan []byte]struct{}
+	rxFrames         atomic.Int64
+	txMic            atomic.Int64
+	unsupportedLogAt time.Time
 }
 
 func (t *Terminal) pushTalkUp(g711a []byte) {
@@ -105,6 +106,10 @@ func (t *Terminal) broadcastTalkDown(pt byte, payload []byte) {
 			binary.LittleEndian.PutUint16(pcm[i*2:], uint16(ulawToLinear(b)))
 		}
 	default:
+		if t.talk.unsupportedLogAt.IsZero() || time.Since(t.talk.unsupportedLogAt) > 5*time.Second {
+			t.talk.unsupportedLogAt = time.Now()
+			t.logf("1078 下行音频格式暂不支持: pt=%d len=%d", pt, len(payload))
+		}
 		return
 	}
 	t.talk.rxFrames.Add(1)
@@ -142,11 +147,11 @@ func isBCDBytes(b []byte) bool {
 	return true
 }
 
-// parse1078Packet 解析 1078 RTP 包头，返回 (pt, dtype, totalLen, hdrLen, ok)。
+// parse1078Packet 解析 1078 RTP 包头，返回 (pt, dtype, totalLen, hdrLen, simLen, ok)。
 // 兼容 2013（6 字节 SIM）与 2019（10 字节 SIM）两种包头长度，并通过下一包魔数与 BCD 校验避免错位。
-func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrLen int, ok bool) {
-	if len(b) < 24 || b[0] != 0x30 || b[1] != 0x31 || b[2] != 0x63 || b[3] != 0x64 || (b[4]&0xC0) != 0x80 {
-		return 0, 0, 0, 0, false
+func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrLen, usedSim int, ok bool) {
+	if len(b) < 24 || b[0] != 0x30 || b[1] != 0x31 || b[2] != 0x63 || b[3] != 0x64 {
+		return 0, 0, 0, 0, 0, false
 	}
 	altSimLen := 10
 	if preferSimLen == 10 {
@@ -178,9 +183,9 @@ func parse1078Packet(b []byte, preferSimLen int) (pt byte, dtype, totalLen, hdrL
 		if len(b) >= tot+4 && (b[tot] != 0x30 || b[tot+1] != 0x31 || b[tot+2] != 0x63 || b[tot+3] != 0x64) {
 			continue
 		}
-		return b[5] & 0x7F, dt, tot, hl + 2, true
+		return b[5] & 0x7F, dt, tot, hl + 2, simLen, true
 	}
-	return 0, 0, 0, 0, false
+	return 0, 0, 0, 0, 0, false
 }
 
 // readAVDown 接收平台通过 1078 媒体连接下发的音频流（双向对讲下行语音）。
@@ -194,6 +199,7 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 	magic := []byte{0x30, 0x31, 0x63, 0x64}
 	tmp := make([]byte, 4096)
 	var buf []byte
+	loggedFirst := false
 	for {
 		select {
 		case <-s.stop:
@@ -214,7 +220,7 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 				if idx > 0 {
 					buf = buf[idx:]
 				}
-				pt, dt, totalLen, hdrLen, ok := parse1078Packet(buf, preferSim)
+				pt, dt, totalLen, hdrLen, simLen, ok := parse1078Packet(buf, preferSim)
 				if !ok {
 					if len(buf) > 40 {
 						buf = buf[4:]
@@ -224,6 +230,10 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 				}
 				if len(buf) < totalLen {
 					break
+				}
+				if !loggedFirst {
+					loggedFirst = true
+					t.logf("1078 下行首包: pt=%d dt=%d sim=%dB body=%dB", pt, dt, simLen, totalLen-hdrLen)
 				}
 				if dt == 3 {
 					t.broadcastTalkDown(pt, buf[hdrLen:totalLen])
