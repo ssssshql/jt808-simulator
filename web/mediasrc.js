@@ -623,19 +623,19 @@ async function talkStartDown() {
   const ac = new AbortController();
   talkDownAbort = ac;
   talkDownBusy = true;
-  // 8kHz 单声道环形缓冲（最多 2 秒），通过 ScriptProcessor 连续线性插值播放，避免逐包启停导致电音/咔哒声
-  const ring = new Float32Array(16000);
+  // 8kHz 单声道环形缓冲（最多 4 秒），预缓冲 150ms (1200 样本) 后用 1024 样本回调连续插值，避免每次回调耗尽导致断续
+  const ring = new Float32Array(32000);
   let rIdx = 0, wIdx = 0, count = 0, phase = 0, primed = false;
   // 用 1 路静音输入驱动 ScriptProcessor，确保各版本 Chromium/WebView2 都会稳定触发 onaudioprocess
   const osc = ctx.createOscillator();
   const zGain = ctx.createGain();
   zGain.gain.value = 0;
-  const sp = ctx.createScriptProcessor(2048, 1, 1);
+  const sp = ctx.createScriptProcessor(1024, 1, 1);
   const ratio = 8000 / ctx.sampleRate;
   sp.onaudioprocess = e => {
     const out = e.outputBuffer.getChannelData(0);
     if (!primed) {
-      if (count < 320) { out.fill(0); return; } // 先攒约 40ms 再起播
+      if (count < 1200) { out.fill(0); return; } // 先攒约 150ms 再起播（1024@48kHz 每次仅消耗 ~171 样本）
       primed = true;
     }
     for (let i = 0; i < out.length; i++) {
@@ -688,8 +688,8 @@ async function talkStartDown() {
         if (count < ring.length) count++;
         else rIdx = (rIdx + 1) % ring.length;
       }
-      if (count > 3200) { // 缓冲超过 400ms 时丢弃旧样本以保持低延迟
-        const drop = count - 1600;
+      if (count > 6400) { // 缓冲超过 800ms 时裁到 300ms，兼顾抗抖动与低延迟
+        const drop = count - 2400;
         rIdx = (rIdx + drop) % ring.length;
         count -= drop;
       }
