@@ -294,6 +294,7 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 			}
 		}
 		if err != nil {
+			s.close()
 			return
 		}
 	}

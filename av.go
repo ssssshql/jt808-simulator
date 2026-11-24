@@ -205,15 +205,6 @@ func (t *Terminal) pump(s *avStream, conn net.Conn, w *rtpWriter, playStart, pla
 		t.errf("内置视频片段无可用帧")
 		return
 	}
-	go func() { // 读走服务器下发数据（对讲音频等），连接断开时结束推流
-		buf := make([]byte, 4096)
-		for {
-			if _, err := conn.Read(buf); err != nil {
-				s.close()
-				return
-			}
-		}
-	}()
 	start := time.Now()
 	media := playStart
 	if media.IsZero() {
