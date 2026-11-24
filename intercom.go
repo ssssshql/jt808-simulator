@@ -311,6 +311,7 @@ func registerIntercomAPI(handle func(string, termHandler)) {
 		ch, unsub := t.subTalkDown()
 		defer unsub()
 		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
 		fl, _ := w.(http.Flusher)
 		if fl != nil {

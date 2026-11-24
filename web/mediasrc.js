@@ -623,41 +623,36 @@ async function talkStartDown() {
   const ac = new AbortController();
   talkDownAbort = ac;
   talkDownBusy = true;
-  // 8kHz 单声道环形缓冲（最多 4 秒），预缓冲 150ms (1200 样本) 后用 1024 样本回调连续插值，避免每次回调耗尽导致断续
-  const ring = new Float32Array(32000);
-  let rIdx = 0, wIdx = 0, count = 0, phase = 0, primed = false;
-  // 用 1 路静音输入驱动 ScriptProcessor，确保各版本 Chromium/WebView2 都会稳定触发 onaudioprocess
-  const osc = ctx.createOscillator();
-  const zGain = ctx.createGain();
-  zGain.gain.value = 0;
-  const sp = ctx.createScriptProcessor(1024, 1, 1);
-  const ratio = 8000 / ctx.sampleRate;
-  sp.onaudioprocess = e => {
-    const out = e.outputBuffer.getChannelData(0);
-    if (!primed) {
-      if (count < 1200) { out.fill(0); return; } // 先攒约 150ms 再起播（1024@48kHz 每次仅消耗 ~171 样本）
-      primed = true;
-    }
-    for (let i = 0; i < out.length; i++) {
-      if (count < 2) { out[i] = 0; primed = false; continue; }
-      const s0 = ring[rIdx], s1 = ring[(rIdx + 1) % ring.length];
-      out[i] = s0 + (s1 - s0) * phase;
-      phase += ratio;
-      while (phase >= 1) {
-        phase -= 1;
-        rIdx = (rIdx + 1) % ring.length;
-        count--;
-        if (count < 2) break;
-      }
+  // 用 AudioBufferSourceNode 按 AudioContext.currentTime 队列调度（原生音频线程重采样，避免 ScriptProcessor 主线程卡顿/被优化停摆）
+  const activeSources = new Set();
+  const batch = [];
+  let nextTime = 0, lastUI = 0;
+  talkDownNode = {
+    disconnect() {
+      for (const s of activeSources) { try { s.stop(); s.disconnect(); } catch (_) { } }
+      activeSources.clear();
     }
   };
-  osc.connect(zGain);
-  zGain.connect(sp);
-  sp.connect(ctx.destination);
-  osc.start();
-  talkDownNode = sp;
-  talkDownKeep = { osc, zGain };
+  talkDownKeep = null;
   talkUpdateUI();
+  const flushBatch = () => {
+    if (!batch.length || ac.signal.aborted) return;
+    const len = batch.length;
+    const buf = ctx.createBuffer(1, len, 8000);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) ch[i] = batch[i];
+    batch.length = 0;
+    const now = ctx.currentTime;
+    if (nextTime < now + 0.02) nextTime = now + 0.12;
+    else if (nextTime - now > 0.8) nextTime = now + 0.25;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    activeSources.add(src);
+    src.onended = () => activeSources.delete(src);
+    src.start(nextTime);
+    nextTime += len / 8000;
+  };
   try {
     const r = await fetch(api('intercom/down'), { signal: ac.signal, cache: 'no-store' });
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
@@ -682,24 +677,17 @@ async function talkStartDown() {
       if (!n) continue;
       talkRxBytes += chunk.length;
       const dv = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      for (let i = 0; i < n; i++) {
-        ring[wIdx] = dv.getInt16(i * 2, true) / 32768;
-        wIdx = (wIdx + 1) % ring.length;
-        if (count < ring.length) count++;
-        else rIdx = (rIdx + 1) % ring.length;
-      }
-      if (count > 6400) { // 缓冲超过 800ms 时裁到 300ms，兼顾抗抖动与低延迟
-        const drop = count - 2400;
-        rIdx = (rIdx + drop) % ring.length;
-        count -= drop;
-      }
-      talkUpdateUI();
+      for (let i = 0; i < n; i++) batch.push(dv.getInt16(i * 2, true) / 32768);
+      if (batch.length >= 640) flushBatch(); // 每 80ms (640@8kHz) 调度一次，兼顾低延迟与轻量
+      const nowMs = performance.now();
+      if (nowMs - lastUI >= 200) { lastUI = nowMs; talkUpdateUI(); }
     }
   } catch (e) {
     if (!ac.signal.aborted) console.warn('下行语音流中断:', e);
   } finally {
-    if (talkDownKeep) { try { talkDownKeep.osc.stop(); talkDownKeep.osc.disconnect(); talkDownKeep.zGain.disconnect(); } catch (_) { } talkDownKeep = null; }
-    if (talkDownNode === sp) { try { sp.disconnect(); } catch (_) { } talkDownNode = null; }
+    for (const s of activeSources) { try { s.stop(); s.disconnect(); } catch (_) { } }
+    activeSources.clear();
+    if (talkDownNode) talkDownNode = null;
     if (talkDownAbort === ac) talkDownAbort = null;
     talkDownBusy = false;
     talkUpdateUI();
