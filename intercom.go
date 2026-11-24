@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type talkState struct {
@@ -297,6 +299,10 @@ func (t *Terminal) readAVDown(s *avStream, conn net.Conn) {
 	}
 }
 
+var talkWSUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
 func registerIntercomAPI(handle func(string, termHandler)) {
 	handle("POST /intercom/up", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
@@ -310,6 +316,34 @@ func registerIntercomAPI(handle func(string, termHandler)) {
 	handle("GET /intercom/down", func(w http.ResponseWriter, r *http.Request, t *Terminal) {
 		ch, unsub := t.subTalkDown()
 		defer unsub()
+		if websocket.IsWebSocketUpgrade(r) {
+			ws, err := talkWSUpgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer ws.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for {
+					if _, _, err := ws.ReadMessage(); err != nil {
+						return
+					}
+				}
+			}()
+			for {
+				select {
+				case <-done:
+					return
+				case <-t.quit:
+					return
+				case pcm := <-ch:
+					if err := ws.WriteMessage(websocket.BinaryMessage, pcm); err != nil {
+						return
+					}
+				}
+			}
+		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")

@@ -654,34 +654,27 @@ async function talkStartDown() {
     nextTime += len / 8000;
   };
   try {
-    const r = await fetch(api('intercom/down'), { signal: ac.signal, cache: 'no-store' });
-    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-    const reader = r.body.getReader();
-    let tail = null;
-    while (!ac.signal.aborted) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!value || !value.length) continue;
-      let chunk = value;
-      if (tail !== null) {
-        chunk = new Uint8Array(value.length + 1);
-        chunk[0] = tail;
-        chunk.set(value, 1);
-        tail = null;
-      }
-      if (chunk.length & 1) {
-        tail = chunk[chunk.length - 1];
-        chunk = chunk.subarray(0, chunk.length - 1);
-      }
-      const n = chunk.length >> 1;
-      if (!n) continue;
-      talkRxBytes += chunk.length;
-      const dv = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      for (let i = 0; i < n; i++) batch.push(dv.getInt16(i * 2, true) / 32768);
-      if (batch.length >= 640) flushBatch(); // 每 80ms (640@8kHz) 调度一次，兼顾低延迟与轻量
-      const nowMs = performance.now();
-      if (nowMs - lastUI >= 200) { lastUI = nowMs; talkUpdateUI(); }
-    }
+    const wsUrl = new URL(api('intercom/down'), location.href);
+    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket(wsUrl.href);
+      ws.binaryType = 'arraybuffer';
+      const onAbort = () => { try { ws.close(); } catch (_) { } resolve(); };
+      ac.signal.addEventListener('abort', onAbort, { once: true });
+      ws.onmessage = ev => {
+        if (ac.signal.aborted || !(ev.data instanceof ArrayBuffer) || ev.data.byteLength < 2) return;
+        const len = ev.data.byteLength & ~1;
+        talkRxBytes += len;
+        const dv = new DataView(ev.data, 0, len);
+        const n = len >> 1;
+        for (let i = 0; i < n; i++) batch.push(dv.getInt16(i * 2, true) / 32768);
+        if (batch.length >= 640) flushBatch(); // 每 80ms (640@8kHz) 调度一次，兼顾低延迟与轻量
+        const nowMs = performance.now();
+        if (nowMs - lastUI >= 200) { lastUI = nowMs; talkUpdateUI(); }
+      };
+      ws.onerror = () => { ac.signal.removeEventListener('abort', onAbort); reject(new Error('WebSocket error')); };
+      ws.onclose = () => { ac.signal.removeEventListener('abort', onAbort); resolve(); };
+    });
   } catch (e) {
     if (!ac.signal.aborted) console.warn('下行语音流中断:', e);
   } finally {
