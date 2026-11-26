@@ -238,7 +238,19 @@ $('#moreMenu').addEventListener('keydown', e => {
   if (e.key === 'Tab') closeMore();
 });
 
-// ---------------- 导航：左侧栏切换「总览」与各功能页 ----------------
+// ---------------- 导航：左侧栏切换「总览」与各功能页（相关页面合并分组，页内 Tabs 切换） ----------------
+const NAV_TABS = {
+  motion: [['motion', '运动与位置'], ['areas', '电子围栏 / 区域']],
+  areas: [['motion', '运动与位置'], ['areas', '电子围栏 / 区域']],
+  bits: [['bits', '状态与报警'], ['adas', '主动安全']],
+  adas: [['bits', '状态与报警'], ['adas', '主动安全']],
+  uplink: [['uplink', '上行报文'], ['tools', '解析与组包']],
+  tools: [['uplink', '上行报文'], ['tools', '解析与组包']],
+  config: [['config', '终端配置'], ['params', '终端参数']],
+  params: [['config', '终端配置'], ['params', '终端参数']],
+  scenario: [['scenario', '场景脚本'], ['stress', '压力测试']],
+  stress: [['scenario', '场景脚本'], ['stress', '压力测试']],
+};
 let page = 'overview';        // 'overview' = 只看主屏；其它 = 弹出面板当前标签
 function go(p) {
   if (!document.getElementById('page-' + p)) p = 'overview';
@@ -247,9 +259,16 @@ function go(p) {
   $('#sheet').hidden = !open;
   $('#dash').hidden = open;
   if (!open) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);   // 地图重新计算尺寸
-  $('#pageTitle').textContent = $(`#nav a[data-page="${p}"] .nt`)?.textContent || '';
+  const navMatch = a => a.dataset.page === p || (a.dataset.group || '').split(',').includes(p);
+  const activeNav = $$('#nav a').find(navMatch);
+  $('#pageTitle').textContent = activeNav?.querySelector('.nt')?.textContent || '';
+  const tabs = NAV_TABS[p], st = $('#sheetTabs');
+  if (st) {
+    st.hidden = !tabs;
+    st.innerHTML = tabs ? tabs.map(([id, label]) => `<button class="${id === p ? 'on' : ''}" data-tab="${id}">${label}</button>`).join('') : '';
+  }
   document.body.classList.toggle('sheet-open', open);
-  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.page === p));
+  $$('#nav a').forEach(a => a.classList.toggle('on', navMatch(a)));
   $$('.page').forEach(s => s.hidden = s.id !== 'page-' + p);
   const h = open ? '#' + p : '';
   if (location.hash !== h) history.replaceState(null, '', h || location.pathname + location.search);
@@ -257,6 +276,7 @@ function go(p) {
   if (open) { $('#content').scrollTop = 0; $('#nav a.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
   if (S) runHooks();
 }
+$('#sheetTabs')?.addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) go(b.dataset.tab); });
 $('#nav').onclick = e => { const a = e.target.closest('a[data-page]'); if (a) go(a.dataset.page); };
 $('#nav').addEventListener('keydown', e => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
