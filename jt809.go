@@ -25,9 +25,12 @@ var jt809MsgNames = map[uint16]string{
 	0x1003: "主链路注销请求", 0x1004: "主链路注销应答",
 	0x1005: "主链路连接保持请求", 0x1006: "主链路连接保持应答",
 	0x1200: "主链路车辆动态信息交换", 0x1201: "上传车辆注册信息", 0x1202: "实时上传车辆定位信息",
-	0x1300: "主链路平台间信息交互", 0x1400: "主链路报警信息交互", 0x1402: "上报报警信息",
+	0x1300: "主链路平台间信息交互", 0x1301: "平台查岗应答", 0x1400: "主链路报警信息交互", 0x1401: "报警督办应答", 0x1402: "上报报警信息",
 	0x1500: "主链路车辆监管", 0x1600: "主链路车辆静态信息",
 	0x9001: "从链路连接请求", 0x9002: "从链路连接应答",
+	0x9005: "从链路连接保持请求", 0x9006: "从链路连接保持应答",
+	0x9300: "从链路平台间信息交互", 0x9301: "平台查岗请求",
+	0x9400: "从链路报警信息交互", 0x9401: "报警督办请求",
 }
 
 type jt809Config struct {
@@ -69,6 +72,12 @@ type jt809Manager struct {
 	srvLn        net.Listener
 	srvClients   int
 	srvRx, srvTx int64
+	subRunning   bool
+	subLn        net.Listener
+	subClients   int
+	subRx, subTx int64
+	lastCheckID  uint32
+	lastWarnID   uint32
 	logs         []jt809Log
 }
 
@@ -448,6 +457,138 @@ func (m *jt809Manager) serve809Conn(c net.Conn) {
 	})
 }
 
+func (m *jt809Manager) startSubLink(port int) error {
+	m.stopSubLink()
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.cfg.DownPort = port
+	m.subLn = ln
+	m.subRunning = true
+	m.mu.Unlock()
+	m.addLog("sub", "sys", 0, fmt.Sprintf("从链路开始监听 :%d", port), nil)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			m.mu.Lock()
+			m.subClients++
+			m.mu.Unlock()
+			go m.serveSubConn(c)
+		}
+	}()
+	return nil
+}
+
+func (m *jt809Manager) stopSubLink() {
+	m.mu.Lock()
+	ln := m.subLn
+	m.subLn = nil
+	m.subRunning = false
+	m.subClients = 0
+	m.mu.Unlock()
+	if ln != nil {
+		ln.Close()
+	}
+}
+
+func (m *jt809Manager) serveSubConn(c net.Conn) {
+	defer func() {
+		c.Close()
+		m.mu.Lock()
+		if m.subClients > 0 {
+			m.subClients--
+		}
+		m.mu.Unlock()
+	}()
+	read809Stream(c, func(inner, raw []byte) {
+		m.mu.Lock()
+		cfg := m.cfg
+		m.subRx++
+		m.mu.Unlock()
+		msg := parse809Frame(inner, cfg.M1, cfg.IA1, cfg.IC1)
+		if msg == nil {
+			return
+		}
+		m.addLog("sub", "down", msg.ID, "", raw)
+		var respID uint16
+		var respBody []byte
+		switch msg.ID {
+		case 0x9001:
+			respID = 0x9002
+			respBody = []byte{0} // 成功
+		case 0x9005:
+			respID = 0x9006
+		case 0x9300:
+			if len(msg.Body) >= 6 {
+				sub := binary.BigEndian.Uint16(msg.Body[0:2])
+				if sub == 0x9301 && len(msg.Body) >= 23 {
+					infoID := binary.BigEndian.Uint32(msg.Body[19:23])
+					m.mu.Lock()
+					m.lastCheckID = infoID
+					m.mu.Unlock()
+					m.addLog("sub", "sys", 0x9301, fmt.Sprintf("收到平台查岗请求 infoID=%d", infoID), nil)
+				}
+			}
+		case 0x9400:
+			if len(msg.Body) >= 43 {
+				sub := binary.BigEndian.Uint16(msg.Body[22:24])
+				if sub == 0x9401 {
+					supID := binary.BigEndian.Uint32(msg.Body[39:43])
+					m.mu.Lock()
+					m.lastWarnID = supID
+					m.mu.Unlock()
+					m.addLog("sub", "sys", 0x9401, fmt.Sprintf("收到报警督办请求 id=%d", supID), nil)
+				}
+			}
+		}
+		if respID != 0 {
+			frame := build809Frame(respID, msg.SN, msg.CenterID, false, 0, cfg.M1, cfg.IA1, cfg.IC1, respBody)
+			if _, err := c.Write(frame); err == nil {
+				m.mu.Lock()
+				m.subTx++
+				m.mu.Unlock()
+				m.addLog("sub", "up", respID, "", frame)
+			}
+		}
+	})
+}
+
+func (m *jt809Manager) sendToSubLink(host string, port int, msgID uint16, body []byte) error {
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	m.mu.Lock()
+	cfg := m.cfg
+	m.cliSN++
+	sn := m.cliSN
+	m.mu.Unlock()
+	login := make([]byte, 4)
+	binary.BigEndian.PutUint32(login, 1)
+	f1 := build809Frame(0x9001, sn, cfg.CenterID, false, 0, cfg.M1, cfg.IA1, cfg.IC1, login)
+	if _, err := c.Write(f1); err != nil {
+		return err
+	}
+	m.addLog("server", "up", 0x9001, "", f1)
+	f2 := build809Frame(msgID, sn+1, cfg.CenterID, cfg.Encrypt, sn+1, cfg.M1, cfg.IA1, cfg.IC1, body)
+	if _, err := c.Write(f2); err != nil {
+		return err
+	}
+	m.addLog("server", "up", msgID, "", f2)
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.CloseWrite()
+	}
+	time.Sleep(30 * time.Millisecond)
+	return nil
+}
+
 func read809Stream(c net.Conn, onFrame func(inner, raw []byte)) {
 	tmp := make([]byte, 4096)
 	var buf []byte
@@ -506,6 +647,21 @@ func build809BizBody(subID uint16, plate string, color int) []byte {
 		binary.BigEndian.PutUint16(data[1:3], 0x0001) // 超速报警
 		binary.BigEndian.PutUint64(data[3:11], uint64(time.Now().Unix()))
 		binary.BigEndian.PutUint32(data[11:15], 1)
+	case 0x1401: // 报警督办应答：督办ID(4) + 结果(1: 0处理中/1已处理)
+		data = make([]byte, 5)
+		jt809.mu.Lock()
+		wid := max(uint32(1), jt809.lastWarnID)
+		jt809.mu.Unlock()
+		binary.BigEndian.PutUint32(data[0:4], wid)
+		data[4] = 1
+	case 0x9401: // 报警督办请求：来源(1)+类型(2)+时间(8)+督办ID(4)+截止时间(8)+级别(1)+督办人(16)+电话(20)+邮箱(32)
+		data = make([]byte, 92)
+		data[0] = 1
+		binary.BigEndian.PutUint16(data[1:3], 0x0001)
+		binary.BigEndian.PutUint64(data[3:11], uint64(time.Now().Unix()))
+		binary.BigEndian.PutUint32(data[11:15], uint32(time.Now().Unix()%100000))
+		binary.BigEndian.PutUint64(data[15:23], uint64(time.Now().Add(10*time.Minute).Unix()))
+		copy(data[24:40], codec.Fixed("admin", 16))
 	default: // 0x1201 车辆注册：平台ID(11) + 厂商(11) + 型号(8) + 终端ID(7) + SIM(12)
 		data = make([]byte, 49)
 		copy(data[0:11], "34000010001")
@@ -534,6 +690,10 @@ func registerJT809API(mux *http.ServeMux) {
 			"srvClients": jt809.srvClients,
 			"srvRx":      jt809.srvRx,
 			"srvTx":      jt809.srvTx,
+			"subRunning": jt809.subRunning,
+			"subClients": jt809.subClients,
+			"subRx":      jt809.subRx,
+			"subTx":      jt809.subTx,
 			"logs":       append([]jt809Log(nil), jt809.logs...),
 		}
 		jt809.mu.Unlock()
@@ -554,6 +714,8 @@ func registerJT809API(mux *http.ServeMux) {
 			jt809.mu.Unlock()
 			cfg.Host = pstr(p, "host", cfg.Host)
 			cfg.Port = pint(p, "port", cfg.Port)
+			cfg.DownIP = pstr(p, "downIp", cfg.DownIP)
+			cfg.DownPort = pint(p, "downPort", cfg.DownPort)
 			cfg.CenterID = uint32(pint(p, "centerId", int(cfg.CenterID)))
 			cfg.UserID = uint32(pint(p, "userId", int(cfg.UserID)))
 			cfg.Password = pstr(p, "password", cfg.Password)
@@ -570,10 +732,31 @@ func registerJT809API(mux *http.ServeMux) {
 			err = jt809.startServer(pint(p, "listenPort", jt809.cfg.ListenPort))
 		case "stopServer":
 			jt809.stopServer()
+		case "startSub":
+			err = jt809.startSubLink(pint(p, "downPort", jt809.cfg.DownPort))
+		case "stopSub":
+			jt809.stopSubLink()
+		case "subCheck":
+			txt := codec.GBK(pstr(p, "text", "在岗查岗测试"))
+			b := make([]byte, 2+4+1+12+4+4+len(txt))
+			binary.BigEndian.PutUint16(b[0:2], 0x9301)
+			binary.BigEndian.PutUint32(b[2:6], uint32(21+len(txt)))
+			b[6] = 1
+			copy(b[7:19], codec.Fixed("101", 12))
+			binary.BigEndian.PutUint32(b[19:23], uint32(time.Now().Unix()%100000))
+			binary.BigEndian.PutUint32(b[23:27], uint32(len(txt)))
+			copy(b[27:], txt)
+			err = jt809.sendToSubLink(pstr(p, "downIp", jt809.cfg.DownIP), pint(p, "downPort", jt809.cfg.DownPort), 0x9300, b)
+		case "subWarn":
+			jt809.mu.Lock()
+			plate, color := jt809.cfg.Plate, jt809.cfg.PlateColor
+			jt809.mu.Unlock()
+			err = jt809.sendToSubLink(pstr(p, "downIp", jt809.cfg.DownIP), pint(p, "downPort", jt809.cfg.DownPort), 0x9400, build809BizBody(0x9401, plate, color))
 		case "send":
 			sub := strings.ToUpper(strings.TrimPrefix(pstr(p, "subId", "1202"), "0X"))
 			jt809.mu.Lock()
 			plate, color := jt809.cfg.Plate, jt809.cfg.PlateColor
+			cid := jt809.lastCheckID
 			jt809.mu.Unlock()
 			switch sub {
 			case "1005":
@@ -584,6 +767,19 @@ func registerJT809API(mux *http.ServeMux) {
 				err = jt809.sendClient(0x1200, build809BizBody(0x1202, plate, color))
 			case "1402":
 				err = jt809.sendClient(0x1400, build809BizBody(0x1402, plate, color))
+			case "1401":
+				err = jt809.sendClient(0x1400, build809BizBody(0x1401, plate, color))
+			case "1301":
+				ans := codec.GBK("正常在岗")
+				b := make([]byte, 2+4+1+12+4+4+len(ans))
+				binary.BigEndian.PutUint16(b[0:2], 0x1301)
+				binary.BigEndian.PutUint32(b[2:6], uint32(21+len(ans)))
+				b[6] = 1
+				copy(b[7:19], codec.Fixed("101", 12))
+				binary.BigEndian.PutUint32(b[19:23], max(uint32(1), cid))
+				binary.BigEndian.PutUint32(b[23:27], uint32(len(ans)))
+				copy(b[27:], ans)
+				err = jt809.sendClient(0x1300, b)
 			default:
 				var raw []byte
 				if h := cleanHexInput(pstr(p, "bodyHex", "")); h != "" {

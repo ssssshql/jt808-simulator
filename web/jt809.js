@@ -21,9 +21,14 @@ async function poll809() {
     st.className = 'tag ' + (d.cliStatus === 'online' ? 'ok' : d.cliStatus === 'connecting' ? 'warn' : '');
     $('#j809CliStat').textContent = `上行 ${d.cliUp} · 下行 ${d.cliDn}`;
     const sv = $('#j809SrvTag');
-    sv.textContent = d.srvRunning ? `监听 :${d.cfg.listenPort}（${d.srvClients} 连接）` : '已停止';
+    sv.textContent = d.srvRunning ? `上级 :${d.cfg.listenPort}（${d.srvClients}）` : '上级停止';
     sv.className = 'tag ' + (d.srvRunning ? 'ok' : '');
-    $('#j809SrvStat').textContent = `收 ${d.srvRx} · 回 ${d.srvTx}`;
+    const sb = $('#j809SubTag');
+    if (sb) {
+      sb.textContent = d.subRunning ? `从链路 :${d.cfg.downPort}（${d.subClients}）` : '从链路未启';
+      sb.className = 'tag ' + (d.subRunning ? 'ok' : '');
+    }
+    $('#j809SrvStat').textContent = `主收 ${d.srvRx}/回 ${d.srvTx} · 从收 ${d.subRx || 0}/回 ${d.subTx || 0}`;
     const c = d.cfg;
     if (!editing.has('j809Host')) setVal('j809Host', c.host);
     if (!editing.has('j809Port')) setVal('j809Port', c.port);
@@ -32,6 +37,7 @@ async function poll809() {
     if (!editing.has('j809Pass')) setVal('j809Pass', c.password);
     if (!editing.has('j809Plate')) setVal('j809Plate', c.plate);
     if (!editing.has('j809SrvPort')) setVal('j809SrvPort', c.listenPort);
+    if (!editing.has('j809SubPort')) setVal('j809SubPort', c.downPort);
     $('#j809Enc').checked = !!c.encrypt;
     $('#j809Logs').innerHTML = (d.logs || []).slice().reverse().map(x =>
       `<tr><td class="mono">${esc(x.t)}</td><td>${esc(x.role)}</td><td>${esc(x.dir)}</td><td class="mono">${esc(x.id)}</td><td>${esc(x.name)}</td><td class="r">${x.len}</td><td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.hex)}</td></tr>`
@@ -41,12 +47,17 @@ async function poll809() {
 
 $('#j809CliStart').onclick = e => j809Op({
   op: 'startClient', host: $('#j809Host').value.trim(), port: +$('#j809Port').value,
+  downPort: +$('#j809SubPort').value || 32021,
   centerId: +$('#j809Center').value, userId: +$('#j809User').value, password: $('#j809Pass').value,
   plate: $('#j809Plate').value.trim(), encrypt: $('#j809Enc').checked ? 1 : 0,
 }, e.currentTarget, '下级平台已发起连接');
 $('#j809CliStop').onclick = e => j809Op({ op: 'stopClient' }, e.currentTarget, '已断开');
 $('#j809SrvStart').onclick = e => j809Op({ op: 'startServer', listenPort: +$('#j809SrvPort').value }, e.currentTarget, '上级平台已启动');
 $('#j809SrvStop').onclick = e => j809Op({ op: 'stopServer' }, e.currentTarget, '上级平台已停止');
+$('#j809SubStart').onclick = e => j809Op({ op: 'startSub', downPort: +$('#j809SubPort').value }, e.currentTarget, '从链路已启动');
+$('#j809SubStop').onclick = e => j809Op({ op: 'stopSub' }, e.currentTarget, '从链路已停止');
+$('#j809SendCheck').onclick = e => j809Op({ op: 'subCheck', downIp: '127.0.0.1', downPort: +$('#j809SubPort').value }, e.currentTarget, '已发查岗请求');
+$('#j809SendWarn').onclick = e => j809Op({ op: 'subWarn', downIp: '127.0.0.1', downPort: +$('#j809SubPort').value }, e.currentTarget, '已发报警督办');
 $$('[data-j809]').forEach(b => b.onclick = () => j809Op({ op: 'send', subId: b.dataset.j809 }, b, '已发送 809 报文'));
 $('#j809Clr').onclick = () => j809Op({ op: 'clearLog' }, null, '已清空');
 onPage('jt809', poll809);

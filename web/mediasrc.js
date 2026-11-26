@@ -769,3 +769,27 @@ $('#talkSpk')?.addEventListener('change', e => {
   if (e.target.checked) talkStartDown(); else talkStopDown();
 });
 talkUpdateUI();
+
+async function ffPoll() {
+  if (page !== 'media' || !$('#ffBar')) return;
+  try {
+    const j = await (await fetch(api('ffmpeg'), { cache: 'no-store' })).json();
+    $('#ffToggle').disabled = !j.available;
+    $('#ffToggle').textContent = j.running ? '停止本地推流' : '启动本地 H.264 推流';
+    $('#ffToggle').dataset.on = j.running ? '1' : '';
+    $('#ffStat').textContent = !j.available ? '未检测到本机 ffmpeg（可选）' : (j.running ? `推流中（${j.source} · ${j.frames} 帧）` : '就绪');
+  } catch (_) { }
+}
+$('#ffToggle')?.addEventListener('click', async e => {
+  const on = e.currentTarget.dataset.on === '1';
+  const r = await fetch(api('ffmpeg'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(on ? { op: 'stop' } : { op: 'start', source: $('#ffSrc').value }),
+  });
+  const j = await r.json();
+  if (!j.ok) toast(j.error || '操作失败');
+  ffPoll();
+});
+onPage('media', ffPoll);
+setInterval(ffPoll, 2000);

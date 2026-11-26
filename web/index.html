@@ -372,6 +372,11 @@
               <label class="switch sm"><input type="checkbox" id="talkSpk" checked><span></span>播放下行语音</label>
               <span class="muted" id="talkStat" style="font-size:12px"></span>
             </div>
+            <div class="btns" id="ffBar" style="margin-bottom:10px;align-items:center">
+              <select id="ffSrc" style="max-width:170px"><option value="desktop">FFmpeg 桌面抓屏</option><option value="testsrc">FFmpeg 测试彩条</option></select>
+              <button class="btn xs" id="ffToggle">启动本地 H.264 推流</button>
+              <span class="muted" id="ffStat" style="font-size:12px"></span>
+            </div>
             <div id="streams"></div>
           </div>
         </div>
@@ -507,6 +512,12 @@
             <div class="field" style="margin-top:10px"><label class="lbl">生成结果（已含 7E 与校验码）</label><textarea id="tbOut" rows="3" class="mono" readonly></textarea></div>
           </div>
         </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-h"><h2>JT/T 808 协议速查表</h2><div class="grow"></div>
+            <div class="tabs" id="refTabs"><button class="on" data-ref="msg">常用消息 ID</button><button data-ref="bits">0200 状态/报警位</button><button data-ref="extra">附加信息与附件命名</button></div>
+          </div>
+          <div class="table-wrap"><table id="refTable"></table></div>
+        </div>
       </section>
 
       <!-- JT/T 809 平台模拟 -->
@@ -525,15 +536,17 @@
             </div>
             <label class="switch" style="margin:8px 0"><input type="checkbox" id="j809Enc"><span></span>启用 809 链路加密</label>
             <div class="btns"><button class="btn primary sm" id="j809CliStart">连接并登录 (0x1001)</button><button class="btn sm ghost" id="j809CliStop">断开</button></div>
-            <div class="btns" style="margin-top:8px"><button class="btn xs" data-j809="1202">发 0x1202 定位</button><button class="btn xs" data-j809="1201">发 0x1201 注册</button><button class="btn xs" data-j809="1402">发 0x1402 报警</button><button class="btn xs" data-j809="1005">发 0x1005 心跳</button></div>
+            <div class="btns" style="margin-top:8px"><button class="btn xs" data-j809="1202">发 0x1202 定位</button><button class="btn xs" data-j809="1201">发 0x1201 注册</button><button class="btn xs" data-j809="1402">发 0x1402 报警</button><button class="btn xs" data-j809="1301">回 0x1301 查岗</button><button class="btn xs" data-j809="1401">回 0x1401 督办</button><button class="btn xs" data-j809="1005">发 0x1005 心跳</button></div>
           </div>
           <div class="card">
-            <div class="card-h"><h2>上级平台（Server）</h2><span class="tag" id="j809SrvTag">已停止</span><div class="grow"></div><span class="muted mono" id="j809SrvStat"></span></div>
+            <div class="card-h"><h2>上级平台 &amp; 从链路</h2><span class="tag" id="j809SrvTag">已停止</span><span class="tag" id="j809SubTag">从链路未启</span><div class="grow"></div><span class="muted mono" id="j809SrvStat"></span></div>
             <div class="form2">
-              <div class="field"><label class="lbl">本地监听端口</label><input id="j809SrvPort" type="number" class="mono"></div>
+              <div class="field"><label class="lbl">上级监听端口</label><input id="j809SrvPort" type="number" class="mono"></div>
+              <div class="field"><label class="lbl">从链路端口 (DownPort)</label><input id="j809SubPort" type="number" class="mono"></div>
             </div>
-            <div class="btns"><button class="btn primary sm" id="j809SrvStart">启动监听</button><button class="btn sm ghost" id="j809SrvStop">停止监听</button></div>
-            <p class="hint" style="margin-top:10px">自动应答下级平台 0x1001 登录（回 0x1002 成功）、0x1005 心跳（回 0x1006）及 0x1003 注销。</p>
+            <div class="btns"><button class="btn primary sm" id="j809SrvStart">启动上级监听</button><button class="btn sm ghost" id="j809SrvStop">停止上级</button><button class="btn sm" id="j809SubStart">启动从链路监听</button><button class="btn sm ghost" id="j809SubStop">停止从链路</button></div>
+            <div class="btns" style="margin-top:8px"><button class="btn xs" id="j809SendCheck">发查岗请求 (0x9301)</button><button class="btn xs" id="j809SendWarn">发报警督办 (0x9401)</button></div>
+            <p class="hint" style="margin-top:10px">上级自动应答 0x1001/0x1005/0x1003；从链路自动应答 0x9001/0x9005 并接收 0x9301 查岗与 0x9401 督办。</p>
           </div>
         </div>
         <div class="card" style="margin-top:14px">

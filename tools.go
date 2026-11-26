@@ -197,7 +197,22 @@ func decodeToolBody(id, ver int, b []byte) []toolField {
 					break
 				}
 				eb := rd.Take(elen)
-				out = append(out, toolField{Name: fmt.Sprintf("附加 0x%02X", eid), Hex: strings.ToUpper(hex.EncodeToString(eb)), Val: fmt.Sprintf("%d 字节", elen)})
+				val := fmt.Sprintf("%d 字节", elen)
+				switch {
+				case eid == 0x01 && len(eb) == 4:
+					val = fmt.Sprintf("里程 %.1f km", float64(binary.BigEndian.Uint32(eb))/10)
+				case eid == 0x02 && len(eb) == 2:
+					val = fmt.Sprintf("油量 %.1f L", float64(binary.BigEndian.Uint16(eb))/10)
+				case eid == 0x03 && len(eb) == 2:
+					val = fmt.Sprintf("记录速度 %.1f km/h", float64(binary.BigEndian.Uint16(eb))/10)
+				case eid == 0x30 && len(eb) == 1:
+					val = fmt.Sprintf("信号强度 %d", eb[0])
+				case eid == 0x31 && len(eb) == 1:
+					val = fmt.Sprintf("卫星数 %d", eb[0])
+				case eid >= 0x64 && eid <= 0x67 && len(eb) >= 6:
+					val = fmt.Sprintf("主动安全报警 ID=%d 类型=0x%02X 级别=%d", binary.BigEndian.Uint32(eb[0:4]), eb[5], eb[4])
+				}
+				out = append(out, toolField{Name: fmt.Sprintf("附加 0x%02X", eid), Hex: strings.ToUpper(hex.EncodeToString(eb)), Val: val})
 			}
 		}
 	case 0x8100:
@@ -210,6 +225,28 @@ func decodeToolBody(id, ver int, b []byte) []toolField {
 				toolField{Name: "鉴权码", Hex: tok, Val: tok},
 			)
 		}
+	case 0x8103, 0x0104:
+		if id == 0x0104 && len(b) >= 3 {
+			seq := rd.U16()
+			out = append(out, toolField{Name: "应答流水号", Hex: fmt.Sprintf("%04X", seq), Val: fmt.Sprintf("%d", seq)})
+		}
+		if rd.Left() >= 1 {
+			cnt := rd.U8()
+			out = append(out, toolField{Name: "参数个数", Hex: fmt.Sprintf("%02X", cnt), Val: fmt.Sprintf("%d 项", cnt)})
+			for i := 0; i < cnt && rd.Left() >= 5; i++ {
+				pid := rd.U32()
+				plen := rd.U8()
+				if rd.Left() < plen {
+					break
+				}
+				pb := rd.Take(plen)
+				pname := fmt.Sprintf("参数 0x%04X", pid)
+				if d := pdef(pid); d != nil {
+					pname = fmt.Sprintf("0x%04X %s", pid, d.Name)
+				}
+				out = append(out, toolField{Name: pname, Hex: strings.ToUpper(hex.EncodeToString(pb)), Val: decodeParam(pid, pb)})
+			}
+		}
 	case 0x8300:
 		if len(b) >= 1 {
 			fl := rd.U8()
@@ -217,6 +254,47 @@ func decodeToolBody(id, ver int, b []byte) []toolField {
 			out = append(out,
 				toolField{Name: "标志", Hex: fmt.Sprintf("%02X", fl), Val: fmt.Sprintf("0x%02X", fl)},
 				toolField{Name: "文本内容", Hex: "-", Val: txt},
+			)
+		}
+	case 0x0900, 0x8900:
+		if len(b) >= 1 {
+			tp := rd.U8()
+			rest := rd.Rest()
+			out = append(out,
+				toolField{Name: "透传类型", Hex: fmt.Sprintf("%02X", tp), Val: fmt.Sprintf("0x%02X", tp)},
+				toolField{Name: "透传内容", Hex: strings.ToUpper(hex.EncodeToString(rest)), Val: codec.UnGBK(rest)},
+			)
+		}
+	case 0x9101:
+		if len(b) >= 7 {
+			ip := rd.LStr()
+			tcp, udp, ch, dt, st := rd.U16(), rd.U16(), rd.U8(), rd.U8(), rd.U8()
+			out = append(out,
+				toolField{Name: "媒体服务器", Hex: "-", Val: fmt.Sprintf("%s (TCP:%d UDP:%d)", ip, tcp, udp)},
+				toolField{Name: "通道 / 类型 / 码流", Hex: fmt.Sprintf("%02X/%02X/%02X", ch, dt, st), Val: fmt.Sprintf("CH%d · 数据类型=%d · 码流=%d", ch, dt, st)},
+			)
+		}
+	case 0x9208:
+		if len(b) >= 20 {
+			ip := rd.LStr()
+			tcp, udp := rd.U16(), rd.U16()
+			out = append(out, toolField{Name: "附件服务器", Hex: "-", Val: fmt.Sprintf("%s (TCP:%d UDP:%d)", ip, tcp, udp)})
+		}
+	case 0x1210:
+		if len(b) >= 20 {
+			dev := rd.Str(7)
+			if ver >= 2019 && len(b) >= 75 {
+				dev = rd.Str(30)
+			}
+			out = append(out, toolField{Name: "终端 ID", Hex: dev, Val: dev})
+		}
+	case 0x8600, 0x8602, 0x8604, 0x8606:
+		if len(b) >= 2 {
+			op := rd.U8()
+			cnt := rd.U8()
+			out = append(out,
+				toolField{Name: "操作属性", Hex: fmt.Sprintf("%02X", op), Val: fmt.Sprintf("%d", op)},
+				toolField{Name: "区域/路线数", Hex: fmt.Sprintf("%02X", cnt), Val: fmt.Sprintf("%d", cnt)},
 			)
 		}
 	}

@@ -122,9 +122,49 @@ func TestADPCM4AndJT809RoundTrip(t *testing.T) {
 		st := j.cliStatus
 		j.mu.Unlock()
 		if st == "online" {
-			return
+			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("jt809 client did not reach online state")
+	if j.cliStatus != "online" {
+		t.Fatalf("jt809 client did not reach online state")
+	}
+
+	// SubLink 查岗测试
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subPort := ln2.Addr().(*net.TCPAddr).Port
+	ln2.Close()
+	if err := j.startSubLink(subPort); err != nil {
+		t.Fatalf("startSubLink: %v", err)
+	}
+	defer j.stopSubLink()
+	chkBody := make([]byte, 27)
+	chkBody[0], chkBody[1], chkBody[5], chkBody[6], chkBody[22] = 0x93, 0x01, 21, 1, 9
+	if err := j.sendToSubLink("127.0.0.1", subPort, 0x9300, chkBody); err != nil {
+		t.Fatalf("sendToSubLink: %v", err)
+	}
+	var cid uint32
+	for dl := time.Now().Add(2 * time.Second); time.Now().Before(dl); {
+		j.mu.Lock()
+		cid = j.lastCheckID
+		j.mu.Unlock()
+		if cid == 9 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if cid != 9 {
+		t.Fatalf("expected lastCheckID=9, got %d", cid)
+	}
+
+	// Annex-B H.264 NALU splitter test
+	stream := []byte{0, 0, 0, 1, 0x67, 1, 2, 0, 0, 0, 1, 0x65, 3, 4, 0, 0, 0, 1, 0x41, 5}
+	var got [][]byte
+	readAnnexBStream(bytes.NewReader(stream), func(au []byte, key bool) { got = append(got, au) })
+	if len(got) != 2 {
+		t.Fatalf("expected 2 NALs before EOF tail, got %d", len(got))
+	}
 }
