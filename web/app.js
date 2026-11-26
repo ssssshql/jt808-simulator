@@ -437,7 +437,7 @@ function renderTerms() {
     ${tSelMode ? `<i class="ck" aria-hidden="true"></i>` : ''}<i class="dot" aria-label="${esc(st)}"></i><b>#${esc(t.id)}</b><span class="mono">${esc(t.phone || '未设置')}</span><em>${esc(t.plate || '')}</em>${t.alarms ? `<span class="badge" aria-label="${t.alarms} 项报警">${t.alarms}</span>` : ''}</button>`;
   }).join('') || `<div class="empty sm">没有匹配「${esc(q)}」的终端</div>`;
   $('#tDel').disabled = TERMS.length <= 1;
-  $('#tAdd').disabled = $('#tClone').disabled = termMax && TERMS.length >= termMax;
+  $('#tAdd').disabled = $('#tClone').disabled = $('#tBatchAdd').disabled = termMax && TERMS.length >= termMax;
   $('#tBatch').hidden = !tSelMode;
   $('#tSelN').textContent = `已选 ${tSel.size}`;
   $('#tAll').checked = list.length > 0 && list.every(t => tSel.has(t.id));
@@ -509,6 +509,16 @@ async function termOp(op, extra = {}, btn) {
 }
 $('#tAdd').onclick = async e => { const j = await termOp('add', {}, e.currentTarget); if (j) { setTerm(j.id, true); toast(`已新增终端 #${j.id}`, 'ok'); } };
 $('#tClone').onclick = async e => { const j = await termOp('clone', {}, e.currentTarget); if (j) { setTerm(j.id, true); toast(`已复制为终端 #${j.id}（手机号/车牌递增，需重新注册）`, 'ok'); } };
+$('#tBatchAdd').onclick = () => { $('#batchModal').hidden = false; $('#batchN').focus(); };
+$('#batchNo').onclick = () => { $('#batchModal').hidden = true; };
+$('#batchGo').onclick = async e => {
+  const count = +$('#batchN').value || 0;
+  if (count < 1 || count > 50) return toast('数量需在 1~50 之间');
+  const clone = $('#batchClone').checked ? 1 : 0;
+  $('#batchModal').hidden = true;
+  const j = await termOp('batch', { count, clone }, e.currentTarget);
+  if (j?.ids?.length) { setTerm(j.ids[0], true); toast(`已批量生成 ${j.ids.length} 个终端`, 'ok'); }
+};
 $('#tDel').onclick = async e => {
   const t = TERMS.find(x => x.id === TID);
   if (!t || !(await confirmBox(`删除终端 #${t.id}（${t.phone || '未设置手机号'}）？会先下线，并删除它保存的状态文件。`))) return;

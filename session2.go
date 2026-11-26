@@ -19,7 +19,11 @@ func (t *Terminal) bRegister() []byte {
 	if c.ver() >= V2019 {
 		return cat(head, fixed(c.Maker, 11), fixed(c.Model, 30), fixed(c.DeviceID, 30), []byte{byte(c.PlateColor)}, gbk(plate))
 	}
-	return cat(head, fixed(c.Maker, 5), fixed(c.Model, 20), fixed(c.DeviceID, 7), []byte{byte(c.PlateColor)}, gbk(plate))
+	modelLen := 20
+	if c.Version == "2011" {
+		modelLen = 8 // JT/T 808-2011 终端型号为 8 字节
+	}
+	return cat(head, fixed(c.Maker, 5), fixed(c.Model, modelLen), fixed(c.DeviceID, 7), []byte{byte(c.PlateColor)}, gbk(plate))
 }
 
 var regResult = map[byte]string{1: "车辆已被注册", 2: "数据库中无该车辆", 3: "终端已被注册", 4: "数据库中无该终端"}

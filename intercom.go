@@ -26,6 +26,8 @@ type talkState struct {
 	rxFrames         atomic.Int64
 	txMic            atomic.Int64
 	unsupportedLogAt time.Time
+	adpcmPred        int32
+	adpcmIdx         int
 }
 
 func (t *Terminal) pushTalkUp(g711a []byte) {
@@ -89,6 +91,62 @@ func ulawToLinear(u byte) int16 {
 	return int16(t - 0x84)
 }
 
+var imaIdxTable = [16]int{-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8}
+
+var imaStepTable = [89]int{
+	7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
+	50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230,
+	253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963,
+	1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327,
+	3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487,
+	12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767,
+}
+
+func (t *Terminal) decodeADPCM4(data []byte) []byte {
+	t.talk.mu.Lock()
+	pred, idx := t.talk.adpcmPred, t.talk.adpcmIdx
+	pcm := make([]byte, len(data)*4)
+	stepNibble := func(nib byte) int16 {
+		step := imaStepTable[idx]
+		diff := step >> 3
+		if nib&1 != 0 {
+			diff += step >> 2
+		}
+		if nib&2 != 0 {
+			diff += step >> 1
+		}
+		if nib&4 != 0 {
+			diff += step
+		}
+		if nib&8 != 0 {
+			pred -= int32(diff)
+		} else {
+			pred += int32(diff)
+		}
+		if pred > 32767 {
+			pred = 32767
+		} else if pred < -32768 {
+			pred = -32768
+		}
+		idx += imaIdxTable[nib&0x0F]
+		if idx < 0 {
+			idx = 0
+		} else if idx > 88 {
+			idx = 88
+		}
+		return int16(pred)
+	}
+	for i, b := range data {
+		s0 := stepNibble(b & 0x0F)
+		s1 := stepNibble((b >> 4) & 0x0F)
+		binary.LittleEndian.PutUint16(pcm[i*4:], uint16(s0))
+		binary.LittleEndian.PutUint16(pcm[i*4+2:], uint16(s1))
+	}
+	t.talk.adpcmPred, t.talk.adpcmIdx = pred, idx
+	t.talk.mu.Unlock()
+	return pcm
+}
+
 func (t *Terminal) broadcastTalkDown(pt byte, payload []byte) {
 	if len(payload) > 4 && payload[0] == 0x00 && payload[1] == 0x01 && int(payload[2])*2 == len(payload)-4 && payload[3] == 0x00 {
 		payload = payload[4:] // 兼容海思 4 字节音频帧头 (00 01 <len/2> 00)
@@ -108,6 +166,8 @@ func (t *Terminal) broadcastTalkDown(pt byte, payload []byte) {
 		for i, b := range payload {
 			binary.LittleEndian.PutUint16(pcm[i*2:], uint16(ulawToLinear(b)))
 		}
+	case 8: // G.726 / 4-bit ADPCM（每字节 2 个采样）
+		pcm = t.decodeADPCM4(payload)
 	default:
 		if t.talk.unsupportedLogAt.IsZero() || time.Since(t.talk.unsupportedLogAt) > 5*time.Second {
 			t.talk.unsupportedLogAt = time.Now()

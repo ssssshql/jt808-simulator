@@ -538,12 +538,15 @@ func (t *Terminal) stampEnabled() bool {
 	return !t.Cfg.NoStamp
 }
 
-// stampIfAt 按需烧入时间水印，水印时间用画面的拍摄时刻（多张图片因此时间递减）
+// stampIfAt 按需烧入时间水印与速度/经纬度 OSD，水印时间用画面的拍摄时刻（多张图片因此时间递减）
 func (t *Terminal) stampIfAt(img []byte, ch int, at time.Time) []byte {
 	if len(img) == 0 || !t.stampEnabled() {
 		return img
 	}
-	return stampJPEG(img, ch, at)
+	t.mu.Lock()
+	osd := fmt.Sprintf("%.0fKM/H %.4f,%.4f", t.speed, t.Lat, t.Lng)
+	t.mu.Unlock()
+	return stampJPEGWithOSD(img, ch, at, osd)
 }
 
 // stampIf 烧入当前时间的水印

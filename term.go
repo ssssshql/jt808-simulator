@@ -15,7 +15,7 @@ type Config struct {
 	Host          string            `json:"host"`
 	Port          int               `json:"port"`
 	Phone         string            `json:"phone"`
-	Version       string            `json:"version"` // 2013 / 2019
+	Version       string            `json:"version"` // 2011 / 2013 / 2019
 	Token         string            `json:"token"`
 	Plate         string            `json:"plate"`
 	PlateColor    int               `json:"plateColor"`
@@ -50,9 +50,9 @@ func (c *Config) transport() string {
 	return "tcp"
 }
 
-// ver 帧格式版本。粤标基于 JT/T 808-2019，选择粤标时强制按 2019 收发
+// ver 帧格式版本。粤标基于 JT/T 808-2019，选择粤标时强制按 2019 收发；2011 与 2013 共用 6 字节手机号帧头
 func (c *Config) ver() int {
-	if c.Version == "2013" && !c.yue() {
+	if (c.Version == "2013" || c.Version == "2011") && !c.yue() {
 		return V2013
 	}
 	return V2019

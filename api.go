@@ -84,7 +84,8 @@ func (t *Terminal) State() map[string]any {
 		"status":      t.statusBits(),
 		"alarms":      t.alarmBits(),
 		"videoAlarms": bits(videoAlarmNames, t.videoWord()),
-		"motion": map[string]any{"mode": t.motion.Mode, "speed": t.motion.Speed, "reportInterval": sec,
+		"motion": map[string]any{"mode": t.motion.Mode, "speed": t.motion.Speed, "dLng": t.motion.DLng, "dLat": t.motion.DLat,
+			"dSpeed": t.motion.DSpeed, "dDir": t.motion.DDir, "reportInterval": sec,
 			"reportRule": why, "nextReportIn": next, "tempTrack": temp},
 		"reply": map[string]any{"mode": t.replyMode, "delay": t.replyDelay},
 		"counters": map[string]int{"up": t.counters.Up, "down": t.counters.Down, "pendingAcks": len(t.pending),
@@ -133,6 +134,8 @@ func newWebMux(m *Manager) http.Handler {
 	registerLogAPI(mux, m)
 	registerFleetAPI(mux, m)
 	registerStressReportAPI(mux)
+	registerToolAPI(mux)
+	registerJT809API(mux)
 	// 终端级接口：/api/t/{id}/xxx；旧接口 /api/xxx 作用于默认终端（兼容脚本与旧页面）
 	handle := func(pattern string, h termHandler) {
 		method, path, _ := strings.Cut(pattern, " ")
@@ -286,6 +289,21 @@ func newWebMux(m *Manager) http.Handler {
 			var t *Terminal
 			if t, err = m.Add(base, op == "clone"); err == nil {
 				res["id"] = t.ID
+			}
+		case "batch":
+			base := m.Get(id)
+			if base == nil {
+				err = fmt.Errorf("终端 #%s 不存在", id)
+				break
+			}
+			var ts []*Terminal
+			if ts, err = m.AddBatch(base, pint(p, "clone", 1) == 1, pint(p, "count", 5)); err == nil {
+				ids := make([]string, len(ts))
+				for i, t := range ts {
+					ids[i] = t.ID
+				}
+				res["ids"] = ids
+				res["count"] = len(ts)
 			}
 		case "delete":
 			err = m.Delete(id, pint(p, "purge", 0) == 1)

@@ -9,8 +9,12 @@ import (
 )
 
 type Motion struct {
-	Mode   string  `json:"mode"`  // stop / drive / circle / route / track（轨迹回放）
+	Mode   string  `json:"mode"`  // stop / drive / circle / route / track / delta（增量模拟）
 	Speed  float64 `json:"speed"` // 目标速度 km/h
+	DLng   float64 `json:"dLng"`  // 增量模式：每秒经度增量
+	DLat   float64 `json:"dLat"`  // 增量模式：每秒纬度增量
+	DSpeed float64 `json:"dSpeed"`
+	DDir   float64 `json:"dDir"`
 	center [2]float64
 	wp     int
 }
@@ -63,6 +67,29 @@ func (t *Terminal) stepMotion(dt float64) {
 	}
 	d := t.speed / 3.6 * dt
 	switch t.motion.Mode {
+	case "delta":
+		if acc {
+			t.speed = math.Max(0, math.Min(220, t.speed+t.motion.DSpeed*dt))
+			t.dir = math.Mod(t.dir+t.motion.DDir*dt+360, 360)
+			if gnssOK := t.alarmWord()&(1<<4|1<<5) == 0; gnssOK {
+				nLat := math.Max(-89.9, math.Min(89.9, t.Lat+t.motion.DLat*dt))
+				nLng := math.Max(-179.9, math.Min(179.9, t.Lng+t.motion.DLng*dt))
+				stepM := distM(t.Lat, t.Lng, nLat, nLng)
+				t.Lat, t.Lng = nLat, nLng
+				if stepM > 0 {
+					t.Mileage += stepM / 1000
+					t.Fuel = math.Max(0, t.Fuel-stepM/1000*0.3)
+					t.track = append(t.track, [2]float64{t.Lng, t.Lat})
+					if len(t.track) > 300 {
+						t.track = t.track[len(t.track)-300:]
+					}
+					t.markDirty()
+				}
+			}
+			t.sats = 10 + rand.Intn(6)
+			t.signal = 20 + rand.Intn(10)
+		}
+		return
 	case "drive":
 		t.dir = math.Mod(t.dir+rand.Float64()*6-3+360, 360)
 	case "circle":

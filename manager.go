@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const maxTerminals = 32
+const maxTerminals = 200
 
 type termRec struct {
 	ID    string `json:"id"`
@@ -285,6 +285,28 @@ func (m *Manager) Add(base *Terminal, clone bool) (*Terminal, error) {
 	}
 	t.logf("%s终端 #%s phone=%s", what, id, phone)
 	return t, nil
+}
+
+// AddBatch 批量创建 count 个终端（单次 1~50，受 maxTerminals 上限约束）
+func (m *Manager) AddBatch(base *Terminal, clone bool, count int) ([]*Terminal, error) {
+	if count < 1 || count > 50 {
+		return nil, fmt.Errorf("单次批量数量需在 1~50 之间")
+	}
+	out := make([]*Terminal, 0, count)
+	for i := 0; i < count; i++ {
+		t, err := m.Add(base, clone)
+		if err != nil {
+			if len(out) > 0 {
+				return out, nil
+			}
+			return nil, err
+		}
+		out = append(out, t)
+		if clone {
+			base = t
+		}
+	}
+	return out, nil
 }
 
 // Delete 删除终端（先下线）；purge=true 同时删除其状态文件。至少保留一个终端

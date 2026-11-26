@@ -23,13 +23,20 @@ import (
 	"time"
 )
 
-const StdGD = "gd" // 粤标；空值（或 "jsatl"）= 苏标
+const (
+	StdGD = "gd" // 粤标；空值（或 "jsatl"）= 苏标
+	StdHB = "hb" // 黑标（黑龙江地方标准，帧格式与附件流程同苏标）
+)
 
 func (c *Config) yue() bool { return c.SafetyStd == StdGD }
+func (c *Config) hei() bool { return c.SafetyStd == StdHB }
 
 func (c *Config) stdName() string {
 	if c.yue() {
 		return "粤标 T/GDRTA 002-2020"
+	}
+	if c.hei() {
+		return "黑标 DB23/T 2722"
 	}
 	return "苏标 JSATL12"
 }
@@ -881,6 +888,8 @@ func (t *Terminal) safetyView() map[string]any {
 	std := "jsatl"
 	if t.Cfg.yue() {
 		std = StdGD
+	} else if t.Cfg.hei() {
+		std = StdHB
 	}
 	return map[string]any{"std": std, "name": t.Cfg.stdName(), "types": t.Cfg.typeNames(), "gd": t.GD,
 		"workNames": gdWorkNames, "alarmBits": gdPeriphAlarmBits, "upgradeSims": gdUpgradeSims, "verForced": t.Cfg.yue() && t.Cfg.Version == "2013"}

@@ -31,6 +31,11 @@ var font5x7 = map[rune][7]string{
 	' ': {"00000", "00000", "00000", "00000", "00000", "00000", "00000"},
 	'C': {"01110", "10001", "10000", "10000", "10000", "10001", "01110"},
 	'H': {"10001", "10001", "10001", "11111", "10001", "10001", "10001"},
+	'K': {"10001", "10010", "10100", "11000", "10100", "10010", "10001"},
+	'M': {"10001", "11011", "10101", "10101", "10001", "10001", "10001"},
+	'/': {"00001", "00010", "00010", "00100", "01000", "01000", "10000"},
+	'.': {"00000", "00000", "00000", "00000", "00000", "01100", "01100"},
+	',': {"00000", "00000", "00000", "00000", "00100", "00100", "01000"},
 }
 
 // stampText 水印文字：本地时间 + 媒体通道号（0 表示全部通道）
@@ -38,20 +43,20 @@ func stampText(ch int, at time.Time) string {
 	return at.Format("2006-01-02 15:04:05") + " CH" + strconv.Itoa(ch)
 }
 
-// drawStamp 在图像左下角画时间水印（黑底白字，按分辨率自动缩放）
-func drawStamp(dst *image.RGBA, ch int, at time.Time) {
+// drawTextBox 在指定角画带半透明黑底的 5×7 点阵文字
+func drawTextBox(dst *image.RGBA, text string, topLeft bool) {
 	b := dst.Bounds()
-	if b.Dx() < 60 || b.Dy() < 24 {
+	if b.Dx() < 60 || b.Dy() < 24 || text == "" {
 		return
 	}
-	text := stampText(ch, at)
 	scale := max(1, min(min(b.Dx()/200, b.Dy()/150), 4))
 	pad := 3 * scale
 	tw := (len([]rune(text))*6 - 1) * scale
 	th := 7 * scale
 	x0, y0 := b.Min.X+pad, b.Max.Y-th-pad
-
-	// 半透明黑底：亮背景（彩条/白墙）上也看得清
+	if topLeft {
+		y0 = b.Min.Y + pad
+	}
 	for y := y0 - pad; y < y0+th+pad; y++ {
 		for x := x0 - pad; x < x0+tw+pad; x++ {
 			if !image.Pt(x, y).In(b) {
@@ -84,8 +89,18 @@ func drawStamp(dst *image.RGBA, ch int, at time.Time) {
 	}
 }
 
+// drawStamp 在图像左下角画时间水印（黑底白字，按分辨率自动缩放）
+func drawStamp(dst *image.RGBA, ch int, at time.Time) {
+	drawTextBox(dst, stampText(ch, at), false)
+}
+
 // stampJPEG 给已有 JPEG 烧入时间水印；解码或编码失败时返回原图（不因为水印影响附件生成）
 func stampJPEG(data []byte, ch int, at time.Time) []byte {
+	return stampJPEGWithOSD(data, ch, at, "")
+}
+
+// stampJPEGWithOSD 同时烧入左下角时间水印与左上角 OSD（速度/经纬度）
+func stampJPEGWithOSD(data []byte, ch int, at time.Time, osd string) []byte {
 	im, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
 		return data
@@ -94,6 +109,9 @@ func stampJPEG(data []byte, ch int, at time.Time) []byte {
 	dst := image.NewRGBA(image.Rect(0, 0, src.Dx(), src.Dy()))
 	draw.Draw(dst, dst.Bounds(), im, src.Min, draw.Src)
 	drawStamp(dst, ch, at)
+	if osd != "" {
+		drawTextBox(dst, osd, true)
+	}
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 88}); err != nil {
 		return data

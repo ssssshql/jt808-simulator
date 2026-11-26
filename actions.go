@@ -31,9 +31,9 @@ func (t *Terminal) Do(typ string, p map[string]any) error {
 	case "setMotion":
 		t.mu.Lock()
 		if m := pstr(p, "mode", ""); m != "" {
-			if !oneOf(m, "stop", "drive", "circle", "route", "track") {
+			if !oneOf(m, "stop", "drive", "circle", "route", "track", "delta") {
 				t.mu.Unlock()
-				return fmt.Errorf("mode 只能是 stop/drive/circle/route/track")
+				return fmt.Errorf("mode 只能是 stop/drive/circle/route/track/delta")
 			}
 			if m == "track" && (t.Replay == nil || len(t.Replay.Points) < 2) {
 				t.mu.Unlock()
@@ -50,6 +50,26 @@ func (t *Terminal) Do(typ string, p map[string]any) error {
 		}
 		if _, ok := p["speed"]; ok {
 			t.motion.Speed = float64(max(min(pint(p, "speed", 60), 220), 0))
+		}
+		if v, ok := p["dLng"]; ok {
+			if f, err := strconv.ParseFloat(fmt.Sprint(v), 64); err == nil {
+				t.motion.DLng = f
+			}
+		}
+		if v, ok := p["dLat"]; ok {
+			if f, err := strconv.ParseFloat(fmt.Sprint(v), 64); err == nil {
+				t.motion.DLat = f
+			}
+		}
+		if v, ok := p["dSpeed"]; ok {
+			if f, err := strconv.ParseFloat(fmt.Sprint(v), 64); err == nil {
+				t.motion.DSpeed = f
+			}
+		}
+		if v, ok := p["dDir"]; ok {
+			if f, err := strconv.ParseFloat(fmt.Sprint(v), 64); err == nil {
+				t.motion.DDir = f
+			}
 		}
 		t.markDirty()
 		t.mu.Unlock()
@@ -325,8 +345,10 @@ func (t *Terminal) setConfig(p map[string]any) error {
 			c.SafetyStd = ""
 		case StdGD, "粤标":
 			c.SafetyStd = StdGD
+		case StdHB, "黑标":
+			c.SafetyStd = StdHB
 		default:
-			return fmt.Errorf("safetyStd 只能是 jsatl（苏标）/gd（粤标）")
+			return fmt.Errorf("safetyStd 只能是 jsatl（苏标）/gd（粤标）/hb（黑标）")
 		}
 	}
 	if v, ok := p["reply8500"]; ok {
@@ -355,8 +377,8 @@ func (t *Terminal) setConfig(p map[string]any) error {
 			*dst = pint(p, k, 0) == 1
 		}
 	}
-	if c.Version != "2013" && c.Version != "2019" {
-		return fmt.Errorf("version 只能是 2013/2019")
+	if c.Version != "2011" && c.Version != "2013" && c.Version != "2019" {
+		return fmt.Errorf("version 只能是 2011/2013/2019")
 	}
 	if c.Port <= 0 || c.Port > 65535 || c.Host == "" {
 		return fmt.Errorf("服务器地址/端口无效")
@@ -385,6 +407,12 @@ func (t *Terminal) setConfig(p map[string]any) error {
 		c = cur
 	}
 	t.Cfg = c
+	if _, ok := p["provId"]; ok {
+		t.Params[0x0081] = itoa(pint(p, "provId", 44))
+	}
+	if _, ok := p["cityId"]; ok {
+		t.Params[0x0082] = itoa(pint(p, "cityId", 100))
+	}
 	if warn := t.trimBlind(); warn != "" { // 调小上限时立即裁剪
 		t.blindWarnAt = time.Time{}
 		t.logf("%s", warn)

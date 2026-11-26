@@ -159,6 +159,13 @@ document.addEventListener('click', e => {
 
 // ================= 运动与位置 =================
 $('#modeSeg').onclick = e => { const m = e.target.dataset.m; if (m) act('setMotion', { mode: m }); };
+$('#deltaSave').onclick = e => act('setMotion', {
+  mode: 'delta',
+  dLng: +$('#dLng').value || 0,
+  dLat: +$('#dLat').value || 0,
+  dSpeed: +$('#dSpd').value || 0,
+  dDir: +$('#dDir').value || 0,
+}, e.target, '增量参数已应用');
 $('#spd').oninput = e => $('#spdV').textContent = e.target.value + ' km/h';
 $('#spd').onchange = e => act('setMotion', { speed: +e.target.value });
 $('#setPos').onclick = e => {
@@ -217,6 +224,9 @@ onState(s => page === 'motion' && renderReplay(s));
 
 function renderMotion(s) {
   $$('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === s.motion.mode));
+  $('#deltaBox').hidden = s.motion.mode !== 'delta';
+  setVal('dLng', s.motion.dLng ?? 0.0001); setVal('dLat', s.motion.dLat ?? 0.0001);
+  setVal('dSpd', s.motion.dSpeed ?? 0); setVal('dDir', s.motion.dDir ?? 0);
   if (!editing.has('spd')) { $('#spd').value = s.motion.speed; $('#spdV').textContent = s.motion.speed + ' km/h'; }
   setVal('pLng', s.loc.lng.toFixed(6)); setVal('pLat', s.loc.lat.toFixed(6));
   setVal('vMil', s.loc.mileage.toFixed(1)); setVal('vFuel', s.loc.fuel.toFixed(1));
@@ -471,17 +481,17 @@ const CFG_CONN = [
   ['host', '网关地址', 'text', 'IP 或域名', v => !v.trim() && '不能为空'],
   ['port', '端口', 'number', '', v => !(+v >= 1 && +v <= 65535) && '1~65535'],
   ['transport', '传输方式', 'select', 'UDP：一个数据报一条消息，按 0x0004/0x0005 超时重传', null, { tcp: 'TCP', udp: 'UDP' }],
-  ['phone', '终端手机号', 'text', '= 平台 DEVICE_ID；2013 版最多 12 位，2019 版最多 20 位', (v, c) => (!/^\d*$/.test(v) && '只能是数字') || (v.length > (c.version === '2013' ? 12 : 20) && '位数过多')],
-  ['version', '协议版本', 'select', '', null, { 2019: 'JT/T 808-2019', 2013: 'JT/T 808-2013' }],
-  ['safetyStd', '主动安全标准', 'select', '粤标基于 JT/T 808-2019；选 2013 时强制按 2019 帧格式', null, { jsatl: '苏标 JSATL12（默认）', gd: '粤标 T/GDRTA 002-2020' }],
+  ['phone', '终端手机号', 'text', '= 平台 DEVICE_ID；2011/2013 版最多 12 位，2019 版最多 20 位', (v, c) => (!/^\d*$/.test(v) && '只能是数字') || (v.length > (c.version === '2019' ? 20 : 12) && '位数过多')],
+  ['version', '协议版本', 'select', '', null, { 2019: 'JT/T 808-2019', 2013: 'JT/T 808-2013', 2011: 'JT/T 808-2011' }],
+  ['safetyStd', '主动安全标准', 'select', '粤标基于 JT/T 808-2019；选 2011/2013 时强制按 2019 帧格式', null, { jsatl: '苏标 JSATL12（默认）', gd: '粤标 T/GDRTA 002-2020', hb: '黑标 DB23/T 2722' }],
   ['token', '鉴权码', 'text', '为空时上线先注册（0100）', null],
 ];
 const CFG_DEV = [
   ['plate', '车牌号', 'text', '', null], ['plateColor', '车牌颜色', 'select', '', null, PLATE_COLORS],
   ['vin', '车辆 VIN', 'text', '17 位；车牌颜色为 0 时注册上报', v => v && v.length !== 17 && '应为 17 位'],
-  ['deviceId', '终端 ID', 'text', '2013 版 7 字节，2019 版 30 字节', (v, c) => v.length > (c.version === '2013' ? 7 : 30) && '过长'],
-  ['maker', '制造商 ID', 'text', '2013 版 5 字节，2019 版 11 字节', (v, c) => v.length > (c.version === '2013' ? 5 : 11) && '过长'],
-  ['model', '终端型号', 'text', '2013 版 20 字节，2019 版 30 字节', (v, c) => v.length > (c.version === '2013' ? 20 : 30) && '过长'],
+  ['deviceId', '终端 ID', 'text', '2011/2013 版 7 字节，2019 版 30 字节', (v, c) => v.length > (c.version === '2019' ? 30 : 7) && '过长'],
+  ['maker', '制造商 ID', 'text', '2011/2013 版 5 字节，2019 版 11 字节', (v, c) => v.length > (c.version === '2019' ? 11 : 5) && '过长'],
+  ['model', '终端型号', 'text', '2011 版 8 字节，2013 版 20 字节，2019 版 30 字节', (v, c) => v.length > (c.version === '2019' ? 30 : c.version === '2011' ? 8 : 20) && '过长'],
   ['imei', '终端 IMEI', 'text', '15 位，2019 鉴权上报', v => v && !/^\d{15}$/.test(v) && '应为 15 位数字'],
   ['iccid', 'SIM 卡 ICCID', 'text', '20 位，0107 属性上报', v => v && !/^[0-9A-Fa-f]{1,20}$/.test(v) && '最多 20 位'],
   ['hwVer', '硬件版本号', 'text', '', null], ['fwVer', '固件版本号', 'text', '升级成功后自动更新', null],
@@ -493,7 +503,62 @@ function cfgInput([k, n, type, help, , opts]) {
   return `<div class="field"><label class="lbl" for="c_${k}">${n}</label>${ctl}${help ? `<span class="muted">${esc(help)}</span>` : ''}</div>`;
 }
 $('#cfgConn').innerHTML = CFG_CONN.map(cfgInput).join('');
-$('#cfgDev').innerHTML = CFG_DEV.map(cfgInput).join('');
+$('#cfgDev').innerHTML = CFG_DEV.map(cfgInput).join('') + `
+  <div class="field span2"><label class="lbl">省市县（同步 0x0081 / 0x0082）</label>
+    <div class="field-row" style="gap:6px;flex-wrap:wrap">
+      <select id="c_regProv" data-cfg="regProv" style="min-width:130px"></select>
+      <select id="c_regCity" data-cfg="regCity" style="min-width:130px"></select>
+      <select id="c_regArea" data-cfg="regArea" style="min-width:130px"></select>
+      <span class="muted mono" id="c_regCode"></span>
+    </div>
+    <datalist id="makerList"><option value="70101"><option value="70102"><option value="AUTOT"><option value="BSJ01"><option value="JTT01"></datalist>
+  </div>`;
+$('#c_maker')?.setAttribute('list', 'makerList');
+const REG = (() => {
+  const raw = (window.JT_REGIONS || '').split('\n').filter(Boolean);
+  const provs = [], cities = {}, areas = {};
+  for (const line of raw) {
+    const code = line.slice(0, 6), name = line.slice(6);
+    if (code.endsWith('0000')) provs.push([code, name]);
+    else if (code.endsWith('00')) (cities[code.slice(0, 2) + '0000'] ||= []).push([code, name]);
+    else {
+      const pk = code.slice(0, 2) + '0000', ck = code.slice(0, 4) + '00';
+      (areas[ck] ||= []).push([code, name]);
+      if (!cities[pk]) cities[pk] = [];
+    }
+  }
+  return { provs, cities, areas };
+})();
+function fillRegProv(code6) {
+  const pSel = $('#c_regProv'), cSel = $('#c_regCity'), aSel = $('#c_regArea');
+  if (!pSel || !REG.provs.length) return;
+  pSel.innerHTML = REG.provs.map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('');
+  const pk = code6.slice(0, 2) + '0000';
+  if (REG.provs.some(([c]) => c === pk)) pSel.value = pk;
+  fillRegCity(code6);
+}
+function fillRegCity(code6) {
+  const pSel = $('#c_regProv'), cSel = $('#c_regCity'), aSel = $('#c_regArea');
+  const pk = pSel.value, list = REG.cities[pk] || [];
+  cSel.innerHTML = (list.length ? list : [[pk.slice(0, 2) + '0100', '市辖区/直辖']]).map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('');
+  const ck = code6.slice(0, 4) + '00';
+  if ([...cSel.options].some(o => o.value === ck)) cSel.value = ck;
+  fillRegArea(code6);
+}
+function fillRegArea(code6) {
+  const cSel = $('#c_regCity'), aSel = $('#c_regArea');
+  const ck = cSel.value, list = REG.areas[ck] || [];
+  aSel.innerHTML = `<option value="">（不选区县）</option>` + list.map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('');
+  if (code6 && [...aSel.options].some(o => o.value === code6)) aSel.value = code6;
+  const sel = aSel.value || cSel.value || '440100';
+  $('#c_regCode').textContent = `省 ${+sel.slice(0, 2)} / 市县 ${sel.slice(2)}`;
+}
+$('#c_regProv')?.addEventListener('change', () => fillRegCity(''));
+$('#c_regCity')?.addEventListener('change', () => fillRegArea(''));
+$('#c_regArea')?.addEventListener('change', () => {
+  const sel = $('#c_regArea').value || $('#c_regCity').value || '440100';
+  $('#c_regCode').textContent = `省 ${+sel.slice(0, 2)} / 市县 ${sel.slice(2)}`;
+});
 $('#cfgBehave').innerHTML = `
   <label class="switch"><input type="checkbox" id="b_autoReconnect"><span></span>断线自动重连（2s→60s 退避，主服务器失败 3 次后交替尝试备份服务器）</label>
   <label class="switch"><input type="checkbox" id="b_autoAlarms"><span></span>长时间运行自动触发报警（超速、疲劳驾驶、超时驾驶/停车）</label>
@@ -528,13 +593,15 @@ function cfgValues() {
   ALL_CFG.forEach(([k]) => p[k] = $('#c_' + k).value.trim());
   p.port = +p.port; p.plateColor = +p.plateColor;
   if (!p.transport) p.transport = 'tcp';
+  const reg = $('#c_regArea')?.value || $('#c_regCity')?.value || '';
+  if (reg.length === 6) { p.provId = +reg.slice(0, 2); p.cityId = +reg.slice(2); }
   return p;
 }
 function stdWarnCfg() {
-  const el = $('#c_safetyStd'), warn = $('#c_version').value === '2013' && el.value === 'gd';
+  const el = $('#c_safetyStd'), v = $('#c_version').value, warn = (v === '2013' || v === '2011') && el.value === 'gd';
   el.classList.toggle('warn', warn);
   const help = el.parentElement.querySelector('.muted');
-  help.textContent = warn ? '⚠ 当前协议版本 2013：粤标将强制按 JT/T 808-2019 帧格式收发' : '粤标基于 JT/T 808-2019；选 2013 时强制按 2019 帧格式';
+  help.textContent = warn ? `⚠ 当前协议版本 ${v}：粤标将强制按 JT/T 808-2019 帧格式收发` : '粤标基于 JT/T 808-2019；选 2011/2013 时强制按 2019 帧格式';
   help.classList.toggle('warn-text', warn);
 }
 function validateCfg() {
@@ -585,12 +652,16 @@ $('#recSave').onclick = e => { const p = {}; REC.forEach(([k]) => p[k] = $('#r_'
 
 function renderConfig(s, force) {
   const c = s.config;
-  if (force || !$$('[data-cfg]').some(el => el.dataset.dirty)) ALL_CFG.forEach(([k]) => setVal('c_' + k, k === 'transport' ? (c.transport || 'tcp') : k === 'safetyStd' ? (c.safetyStd || 'jsatl') : c[k]));
+  if (force || !$$('[data-cfg]').some(el => el.dataset.dirty)) {
+    ALL_CFG.forEach(([k]) => setVal('c_' + k, k === 'transport' ? (c.transport || 'tcp') : k === 'safetyStd' ? (c.safetyStd || 'jsatl') : c[k]));
+    const p81 = s.params?.find(x => x.id === 0x0081)?.val ?? 44, p82 = s.params?.find(x => x.id === 0x0082)?.val ?? 100;
+    fillRegProv(String(+p81).padStart(2, '0') + String(+p82).padStart(4, '0'));
+  }
   stdWarnCfg();
   const online = s.conn.status !== 'offline';
   $('#cfgLock').hidden = !online;
   ['host', 'port', 'transport', 'phone', 'version'].forEach(k => $('#c_' + k).disabled = online);
-  $('#c_safetyStd').disabled = online && c.version === '2013'; // 2013 终端切换粤标会改变帧格式
+  $('#c_safetyStd').disabled = online && (c.version === '2013' || c.version === '2011'); // 2011/2013 终端切换粤标会改变帧格式
   $('#b_autoReconnect').checked = c.autoReconnect; $('#b_autoAlarms').checked = !!c.autoAlarms; $('#b_autoAttach').checked = c.autoAttach; $('#b_upRsa').checked = c.upRsa;
   $('#rsaNote').textContent = s.rsa.platKey ? '已收到平台 RSA 公钥。' : '尚未收到平台 8A00 公钥：开启后在收到公钥前仍以明文发送。';
   $('#b_reply').value = s.reply.mode; setVal('b_delay', s.reply.delay);
